@@ -67,23 +67,32 @@ class AgenticInvestigator:
         # reported in the case file and as an LLM_ERROR event.
         self.llm_error: dict[str, Any] | None = None
         self._llm_disabled = False
+        self._last_was_fallback = False
+        self._prior_alert_count = 0
 
     # --- tool dispatch (deterministic) -------------------------------------
 
     def _run_tool(self, action: str, args: dict[str, Any]) -> dict[str, Any]:
         fn = getattr(self.tools, action, None)
-        if fn is None:
-            return {"error": f"unknown tool {action}"}
+        if fn is None or not isinstance(args, dict):
+            return {"error": f"unknown tool or bad args: {action}"}
+        if action == "compute_features":
+            # the case's prior-alert count is a fact, not the model's choice
+            args = {**args, "prior_alert_count": self._prior_alert_count}
         try:
-            return fn(**args)
-        except TypeError:
-            # tolerate the LLM passing slightly wrong arg names — try positional
-            # common cases based on the trigger
-            return {"error": f"bad args for {action}: {args}"}
+            result = fn(**args)
+        except Exception as exc:  # noqa: BLE001
+            # a bad argument from the model (wrong name, unknown id, bad date)
+            # is reported back to it as an observation; it must never fail the
+            # case, because the deterministic evidence is computed separately
+            return {"error": f"{action} failed: {type(exc).__name__}: {str(exc)[:200]}"}
+        return result if isinstance(result, dict) else {"result": result}
 
     # --- main loop ---------------------------------------------------------
 
-    def investigate(self, trigger_transaction_id: str) -> tuple[DetectiveOutput, RiskScore, dict]:
+    def investigate(self, trigger_transaction_id: str, *, prior_alert_count: int = 0
+                    ) -> tuple[DetectiveOutput, RiskScore, dict]:
+        self._prior_alert_count = prior_alert_count
         trigger = self.tools.get_transaction(trigger_transaction_id)
         if not trigger.get("found", True) and "customer_id" not in trigger:
             raise KeyError(f"trigger {trigger_transaction_id} not found")
@@ -108,10 +117,12 @@ class AgenticInvestigator:
                         "action": action.action})
 
             if action.is_conclude():
-                proposed_rec = action.recommendation
-                proposed_just = action.justification
+                # a deterministic fallback conclusion is NOT a model proposal
+                if not self._last_was_fallback:
+                    proposed_rec = action.recommendation
+                    proposed_just = action.justification
                 transcript.append({"reasoning": action.reasoning, "action": "conclude",
-                                    "recommendation": proposed_rec})
+                                    "recommendation": action.recommendation})
                 break
 
             self._emit("TOOL_SELECTED", "DETECTIVE",
@@ -123,7 +134,8 @@ class AgenticInvestigator:
 
         # --- deterministic ground truth (independent of the LLM) -----------
         from .features import extract_features
-        feats = extract_features(trigger_transaction_id, self.tools.bank, self.cfg)
+        feats = extract_features(trigger_transaction_id, self.tools.bank, self.cfg,
+                                 prior_alert_count=prior_alert_count)
         pattern = self.tools.detect_pattern(trigger_transaction_id)
         pattern["severity"] = pattern_severity(pattern.get("pattern", "NONE"))
         risk = compute_risk_score(feats, self.cfg, pattern=pattern)
@@ -173,10 +185,14 @@ class AgenticInvestigator:
                          default=str)
             + "\n\nDecide the next step. Respond with ONE JSON object."
         )
+        self._last_was_fallback = False
         if not self._llm_disabled:
             try:
                 raw = self.llm.complete(prompt, system=system, temperature=0.0)
-                action = AgentAction.from_dict(extract_json(raw))
+                obj = extract_json(raw)
+                if not isinstance(obj, dict):
+                    raise SchemaError("model reply is not a JSON object")
+                action = AgentAction.from_dict(obj)
                 action.validate()
                 return action
             except LLMProviderError as exc:
@@ -185,12 +201,13 @@ class AgenticInvestigator:
                 self._llm_disabled = True
                 self.llm_error = exc.to_dict()
                 self._emit("LLM_ERROR", "DETECTIVE", dict(self.llm_error))
-            except (LLMError, SchemaError, ValueError):
+            except (LLMError, SchemaError, ValueError, TypeError, AttributeError, KeyError):
                 # offline client / malformed model output -> fall through to the
                 # deterministic fallback action below
                 pass
         # deterministic fallback action:
         # run compute_features if not yet done, else conclude by score.
+        self._last_was_fallback = True
         if "compute_features" not in context["evidence_gathered"]:
             return AgentAction(
                 reasoning="(fallback) gather deterministic features first",
@@ -279,7 +296,7 @@ class AgenticInvestigator:
         }
 
 
-_MAX_OBSERVATION_CHARS = 2000
+_MAX_OBSERVATION_CHARS = 6000
 
 
 def _compact_result(tool: str, result: Any) -> Any:
