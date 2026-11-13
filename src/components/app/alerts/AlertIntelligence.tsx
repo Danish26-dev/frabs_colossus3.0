@@ -18,6 +18,7 @@ import {
   type CustomerContext,
 } from "../../../lib/frab-alerts";
 import { setActiveCase } from "../../../lib/frab-case-state";
+import { useWorkerHealth } from "../../../hooks/useWorkerHealth";
 import { Dot, EmptyBlock, ErrorBlock, LoadingBlock, Mono, PanelShell } from "../ui";
 
 type Load = "loading" | "ready" | "error";
@@ -64,29 +65,22 @@ function Select({
 
 function SystemStatus() {
   const live = FEED_MODE === "live";
-  const rows: [string, string][] = live
-    ? [
-        ["BANK FEED", "LIVE"],
-        ["RULE ENGINE", "ACTIVE"],
-        ["FRAB", "READY"],
-        ["TEE", "VERIFIED"],
-      ]
-    : [
-        ["BANK FEED", "SIMULATED"],
-        ["RULE ENGINE", "SIMULATED"],
-        ["FRAB", "READY"],
-        ["TEE", "NOT CONNECTED"],
-      ];
+  // Inference reflects what the worker reports (0g / 0g-mock / offline / unreachable), not a fixed claim.
+  const { badge } = useWorkerHealth();
+  const rows: [string, string, "ok" | "warn" | "bad" | "idle"][] = [
+    ["BANK FEED", live ? "LIVE" : "SIMULATED", live ? "ok" : "idle"],
+    ["RULE ENGINE", live ? "ACTIVE" : "SIMULATED", live ? "ok" : "idle"],
+    ["FRAB", "READY", "ok"],
+    ["INFERENCE", badge.short, badge.dot],
+  ];
   return (
     <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 md:grid-cols-1">
-      {rows.map(([k, v]) => (
+      {rows.map(([k, v, dot]) => (
         <span key={k} className="flex items-center justify-between gap-3">
           <Mono className="text-[9px] text-muted-foreground">{k}</Mono>
           <span className="flex items-center gap-2">
-            <Dot state={live ? "ok" : v === "READY" ? "ok" : "idle"} />
-            <Mono
-              className={`text-[9px] ${live || v === "READY" ? "text-foreground" : "text-muted-foreground"}`}
-            >
+            <Dot state={dot} />
+            <Mono className={`text-[9px] ${dot === "ok" ? "text-foreground" : "text-muted-foreground"}`}>
               {v}
             </Mono>
           </span>

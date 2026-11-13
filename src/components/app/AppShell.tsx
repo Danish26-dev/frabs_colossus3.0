@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import { IS_LIVE_BACKEND } from "../../lib/frab-api";
 import { useActiveCase, type ActiveCase } from "../../lib/frab-case-state";
+import { useWorkerHealth } from "../../hooks/useWorkerHealth";
 import { Dot, Mono } from "./ui";
 
 const frabLogo = "/frab-logo.png";
@@ -16,6 +17,8 @@ export const APP_NAV = [
 function SystemBlock() {
   const tone = IS_LIVE_BACKEND ? "ok" : "idle";
   const suffix = IS_LIVE_BACKEND ? "" : " · NOT CONNECTED";
+  // The inference line reflects what the worker reports, not a fixed claim.
+  const { badge } = useWorkerHealth();
   return (
     <div className="border-t border-border px-5 py-5">
       <Link
@@ -27,7 +30,7 @@ function SystemBlock() {
       <Mono className="block text-[9px] text-muted-foreground">SYSTEM</Mono>
       <ul className="mt-3 space-y-2">
 
-        {["BANK FEED ACTIVE", "FRAB ONLINE", "TEE VERIFIED"].map((s) => (
+        {["BANK FEED ACTIVE", "FRAB ONLINE"].map((s) => (
           <li key={s} className="flex items-center gap-2">
             <Dot state={tone} />
             <Mono className={`text-[9px] ${IS_LIVE_BACKEND ? "text-foreground" : "text-muted-foreground"}`}>
@@ -36,6 +39,12 @@ function SystemBlock() {
             </Mono>
           </li>
         ))}
+        <li className="flex items-center gap-2">
+          <Dot state={badge.dot} />
+          <Mono className={`text-[9px] ${badge.dot === "ok" ? "text-foreground" : "text-muted-foreground"}`}>
+            {badge.long}
+          </Mono>
+        </li>
       </ul>
     </div>
   );

@@ -1,5 +1,6 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useWorkerHealth } from "../../../hooks/useWorkerHealth";
 import {
   fetchAlerts,
   fetchInvestigationStatus,
@@ -106,6 +107,9 @@ export function StatusStrip() {
   const inv = useQuery({ queryKey: ["cases-summary"], queryFn: fetchInvestigationStatus });
   const sys = useQuery({ queryKey: ["system-status"], queryFn: fetchSystemStatus });
   const s = sys.data?.data;
+  // Worker and inference rows come from the worker's own /health, not from fixed text.
+  const { mode, badge } = useWorkerHealth();
+  const workerReachable = mode === "0g" || mode === "0g-mock" || mode === "offline";
   const i = inv.data?.data;
 
   return (
@@ -184,15 +188,19 @@ export function StatusStrip() {
             <StatusLine label="BANK FEED" value={stateLabel(s.bankFeed)} tone={stateTone(s.bankFeed)} />
             <StatusLine label="ALERT PIPELINE" value={stateLabel(s.alertPipeline)} tone={stateTone(s.alertPipeline)} />
             <StatusLine
-              label="CONFIDENTIAL WORKSPACE"
-              value={stateLabel(s.confidentialWorkspace)}
-              tone={stateTone(s.confidentialWorkspace)}
+              label="INVESTIGATION WORKER"
+              value={workerReachable ? "ONLINE" : badge.short}
+              tone={workerReachable ? "ok" : "idle"}
             />
-            <StatusLine label="TEE ATTESTATION" value={stateLabel(s.teeAttestation)} tone={stateTone(s.teeAttestation)} />
             <StatusLine
-              label="ENCRYPTED INFERENCE"
-              value={stateLabel(s.encryptedInference)}
-              tone={stateTone(s.encryptedInference)}
+              label="PRIVATE INFERENCE (0G)"
+              value={badge.short}
+              tone={badge.dot === "ok" ? "ok" : "idle"}
+            />
+            <StatusLine
+              label="ENCLAVE ATTESTATION (FRAB-VERIFIED)"
+              value={stateLabel(s.teeAttestation)}
+              tone={stateTone(s.teeAttestation)}
             />
           </div>
         ) : null}

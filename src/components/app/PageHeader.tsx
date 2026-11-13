@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { IS_LIVE_BACKEND } from "../../lib/frab-api";
+import { useWorkerHealth } from "../../hooks/useWorkerHealth";
 import { Dot, Mono } from "./ui";
 
 function Clock() {
@@ -22,10 +23,10 @@ function Clock() {
 const RIGHT = [
   { label: "SYSTEM STATUS", live: "ONLINE" },
   { label: "BANK FEED", live: "ACTIVE" },
-  { label: "CONFIDENTIAL WORKSPACE", live: "READY" },
 ];
 
 export default function PageHeader({ index, title }: { index: string; title: string }) {
+  const { badge } = useWorkerHealth();
   return (
     <header className="border-b border-border px-6 py-6 md:px-12">
       <div className="flex flex-wrap items-start justify-between gap-8">
@@ -50,6 +51,13 @@ export default function PageHeader({ index, title }: { index: string; title: str
               </Mono>
             </span>
           ))}
+          <span className="flex items-center gap-2">
+            <Mono className="text-[9px] text-muted-foreground">PRIVATE INFERENCE</Mono>
+            <Dot state={badge.dot} />
+            <Mono className={`text-[9px] ${badge.dot === "ok" ? "text-foreground" : "text-warning"}`}>
+              {badge.short}
+            </Mono>
+          </span>
         </div>
       </div>
     </header>
