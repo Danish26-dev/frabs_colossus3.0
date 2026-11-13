@@ -32,7 +32,7 @@ import {
   WORKER_BASE_URL,
   IS_WORKER_LIVE,
   fetchWorkerResult,
-  fetchWorkerStatus,
+  fetchWorkerRunCounts,
 } from "./frab-worker";
 import { VOICE_BASE_URL } from "./frab-voice";
 import { normalizeLlmMode } from "./frab-inference";
@@ -200,6 +200,20 @@ function buildInvestigationAnalytics(cases: RawCase[]): InvestigationAnalytics {
   };
 }
 
+/**
+ * The bank API is read-only, so its /cases status never changes when FRAB investigates.
+ * When the worker is configured, started / running / completed come from the worker's
+ * /status per case (RUNNING vs COMPLETE | PARTIAL | FAILED; 404 = never started).
+ * If the worker cannot be reached at all, fall back to the bank counts.
+ */
+async function buildInvestigationAnalyticsLive(cases: RawCase[]): Promise<InvestigationAnalytics> {
+  const bank = buildInvestigationAnalytics(cases);
+  if (!IS_WORKER_LIVE) return bank;
+  const live = await fetchWorkerRunCounts(cases.map((c) => c.case_id));
+  // Worker unreachable or rejected us: keep the bank view.
+  return live ? { ...live, humanReviewRequired: bank.humanReviewRequired } : bank;
+}
+
 function buildOutcomeAnalytics(cases: RawCase[]): OutcomeAnalytics {
   const outcomes = cases.map((c) => dispositionToOutcome(c.disposition, c.investigation_note));
   return { recommendations: countBy(outcomes, (o) => o), total: cases.length };
@@ -341,15 +355,16 @@ export async function fetchAnalyticsSnapshot(): Promise<AnalyticsSnapshot> {
     };
   }
   const { alerts, cases } = await loadAlertsCases();
-  const [scenarios, agents] = await Promise.all([
+  const [scenarios, agents, investigations] = await Promise.all([
     buildScenarioValidation(cases),
     buildAgentOps(cases),
+    buildInvestigationAnalyticsLive(cases),
   ]);
   return {
     source: "live",
     fetchedAt,
     alerts: buildAlertAnalytics(alerts),
-    investigations: buildInvestigationAnalytics(cases),
+    investigations,
     outcomes: buildOutcomeAnalytics(cases),
     agents,
     scenarios,

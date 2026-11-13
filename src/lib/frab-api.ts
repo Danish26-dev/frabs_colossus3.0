@@ -188,6 +188,7 @@ import {
   type RawCase,
   type RawTxnPage,
 } from "./frab-backend";
+import { fetchWorkerRunCounts } from "./frab-worker";
 
 function demoEnvelope<T>(demo: T): Promise<Envelope<T>> {
   const fetchedAt = new Date().toISOString();
@@ -287,10 +288,12 @@ export async function fetchInvestigationStatus(): Promise<Envelope<Investigation
     (c) => (c.disposition ?? "").toUpperCase() === "PENDING",
   ).length;
   const last = cases[0];
+  // The bank API is read-only, so running/completed come from the worker's own /status.
+  const live = await fetchWorkerRunCounts(cases.map((c) => c.case_id));
   const data: InvestigationStatus = {
     newAlerts: alerts.filter((a) => isOpen(a.status)).length,
-    investigations: cases.filter((c) => isOpen(c.status)).length,
-    completed: cases.filter((c) => isClosed(c.status)).length,
+    investigations: live ? live.running : cases.filter((c) => isOpen(c.status)).length,
+    completed: live ? live.completed : cases.filter((c) => isClosed(c.status)).length,
     requiringAnalyst,
     lastCase: last ? { id: last.case_id, status: last.status } : null,
   };

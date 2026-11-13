@@ -198,7 +198,11 @@ function PrivateInferenceBlock() {
 
 export function AnalyticsOverview() {
   const navigate = useNavigate();
-  const q = useQuery({ queryKey: ["analytics-snapshot"], queryFn: fetchAnalyticsSnapshot });
+  const q = useQuery({
+    queryKey: ["analytics-snapshot"],
+    queryFn: fetchAnalyticsSnapshot,
+    refetchInterval: 15_000, // running / completed follow the worker's live status
+  });
   const health = useQuery({ queryKey: ["system-health"], queryFn: fetchSystemHealth });
 
   const goAlerts = () => void navigate({ to: "/alerts" });

@@ -104,7 +104,11 @@ export function AlertTelemetry() {
 /* ------------------------------ 06/07/08 — STATUS, INTEGRITY, ACTIONS */
 
 export function StatusStrip() {
-  const inv = useQuery({ queryKey: ["cases-summary"], queryFn: fetchInvestigationStatus });
+  const inv = useQuery({
+    queryKey: ["cases-summary"],
+    queryFn: fetchInvestigationStatus,
+    refetchInterval: 15_000,
+  });
   const sys = useQuery({ queryKey: ["system-status"], queryFn: fetchSystemStatus });
   const s = sys.data?.data;
   // Worker and inference rows come from the worker's own /health, not from fixed text.

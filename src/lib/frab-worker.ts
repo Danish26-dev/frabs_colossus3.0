@@ -308,6 +308,41 @@ export async function fetchWorkerHealth(signal?: AbortSignal): Promise<WorkerHea
   return (await res.json()) as WorkerHealth;
 }
 
+export interface WorkerRunCounts {
+  /** Cases the worker knows about (any status). */
+  started: number;
+  /** COMPLETE, PARTIAL or FAILED. */
+  completed: number;
+  running: number;
+}
+
+/**
+ * Count investigations from the worker's own /status. The bank API is read-only, so its
+ * /cases status never changes when FRAB runs. Returns null when the worker answered for
+ * none of the cases (unreachable, 401 or not configured), so callers can fall back.
+ * A 404 for a case just means it was never run.
+ */
+export async function fetchWorkerRunCounts(caseIds: string[]): Promise<WorkerRunCounts | null> {
+  if (!WORKER_BASE_URL || caseIds.length === 0) return null;
+  const statuses = await Promise.all(
+    caseIds.map(async (id): Promise<string | null> => {
+      try {
+        return ((await fetchWorkerStatus(id)).status ?? "").toUpperCase() || null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  if (statuses.every((s) => s === null)) return null;
+  const known = statuses.filter((s): s is string => s !== null);
+  const terminal = new Set(["COMPLETE", "COMPLETED", "PARTIAL", "FAILED"]);
+  return {
+    started: known.length,
+    completed: known.filter((s) => terminal.has(s)).length,
+    running: known.filter((s) => s === "RUNNING" || s === "QUEUED" || s === "STARTED").length,
+  };
+}
+
 /** Worker lifecycle status. */
 export async function fetchWorkerStatus(caseId: string): Promise<{ status: string }> {
   if (!WORKER_BASE_URL) throw new Error("No worker configured (VITE_FRAB_WORKER_URL unset)");
