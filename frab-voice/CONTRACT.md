@@ -16,19 +16,29 @@ Body:
 ```json
 {
   "alert_id": "ALT0007",
-  "customer_phone": "+910000000000",
   "risk_tier": "HIGH",
   "known_evidence": "6.8x avg outgoing; new beneficiary; 5-way fan-in",
   "frab_recommendation": "ESCALATE",
-  "verification_question": "Which city is your account registered in?",
-  "verification_expected_answer": "Ahmedabad",
   "extra_variables": {}
 }
 ```
-- `customer_phone` (E.164) is required — the number to call.
-- The rest are case-derived values from the FRAB case (source of truth), passed
-  into the assistant's dynamic variables. Case/transaction details are pulled
-  from the bank bundle via `alert_id`; these fields fill what the bundle lacks.
+Headers: `Authorization: Bearer <VOICE_API_TOKEN>` (or `?token=<VOICE_API_TOKEN>`).
+
+- `alert_id` is required: case, customer and transaction details come from the
+  bank bundle for that alert. If the bank data can't be loaded, no call is
+  placed and the call is recorded as `FAILED`.
+- The number to call is resolved by the service (customer directory). Do not
+  send `customer_phone`; it is ignored unless the service explicitly enables an
+  override for local testing (then it must be E.164).
+- Identity verification is built by the service from the bank's customer record
+  ("Which city is your account registered in?", answered from the record), so
+  the expected answer never reaches the browser. `verification_question` /
+  `verification_expected_answer` in the request are ignored whenever the record
+  provides one, and only used as a fallback when it doesn't.
+- One live call per case: escalating again while a call is active returns that
+  same call.
+- `risk_tier`, `known_evidence`, `frab_recommendation` and `extra_variables` are
+  case-derived values passed into the assistant's dynamic variables.
 
 Response `200`:
 ```json
