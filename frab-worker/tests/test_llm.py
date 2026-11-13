@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from frab_worker.llm import (
+    LLMConfigError,
     LLMError,
     OfflineLLMClient,
     extract_json,
@@ -18,13 +19,12 @@ def test_default_client_is_offline(monkeypatch):
     assert get_client().name == "offline"
 
 
-def test_attested_without_config_falls_back_to_offline(monkeypatch):
-    # requesting attested mode without URL/hash (or SDK) must not crash —
-    # it degrades to offline so the worker stays functional.
-    monkeypatch.setenv("FRAB_LLM", "attested")
-    monkeypatch.delenv("FRAB_ATTESTED_URL", raising=False)
-    monkeypatch.delenv("FRAB_ATTESTED_IMAGE_HASH", raising=False)
-    assert get_client().name == "offline"
+def test_unknown_provider_is_refused(monkeypatch):
+    # an unrecognised provider must fail loudly, never quietly fall back to a
+    # different mode that would misreport which model produced the reasoning
+    monkeypatch.setenv("LLM_PROVIDER", "not-a-provider")
+    with pytest.raises(LLMConfigError):
+        get_client()
 
 
 def test_offline_echoes_facts_block():

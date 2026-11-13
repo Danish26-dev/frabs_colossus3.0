@@ -14,11 +14,9 @@ available. So agents depend on the `LLMClient` interface, and we provide:
   * MockInferenceClient — scripted, network-free stand-in for ZeroGClient. Lets
                         the agentic workflow and the frontend run end to end
                         without spending any inference credits.
-  * VLLMClient        — legacy: a vLLM OpenAI-compatible endpoint serving Gemma.
-  * AttestedGemmaClient — legacy/stretch: Confidential Space + attested TLS.
 
-Provider selection (see get_client): LLM_PROVIDER, falling back to the legacy
-FRAB_LLM variable, defaulting to offline.
+Provider selection (see get_client): LLM_PROVIDER (FRAB_LLM is also accepted),
+defaulting to offline.
 
 Because the deterministic layer (features, scoring, patterns) is the source of
 truth, the LLM is only ever asked to NARRATE and PHRASE. That keeps the system
@@ -226,6 +224,9 @@ class ZeroGClient:
         ZG_ALLOW_FALLBACKS         optional true|false (Router provider failover)
         ZG_MAX_PRICE_USD_PROMPT    optional price ceiling, USD per 1M tokens
         ZG_MAX_PRICE_USD_COMPLETION optional price ceiling, USD per 1M tokens
+        ZG_PRICE_USD_PROMPT        optional list price, USD per 1M tokens (cost
+        ZG_PRICE_USD_COMPLETION    estimate in logs only; 0G returns no cost)
+        ZG_EXTRA_BODY              optional JSON object of model-specific options
         LLM_MAX_OUTPUT_TOKENS      default 1024, applied to every request
         LLM_TEMPERATURE            optional; overrides the caller's temperature
     """
@@ -271,13 +272,42 @@ class ZeroGClient:
         self.max_price_completion = _env_float("ZG_MAX_PRICE_USD_COMPLETION")
         fb = os.environ.get("ZG_ALLOW_FALLBACKS", "").strip()
         self.allow_fallbacks: bool | None = _truthy(fb) if fb else None
+        # list prices (USD per 1M tokens) used only to ESTIMATE cost in logs
+        self.price_prompt = _env_float("ZG_PRICE_USD_PROMPT")
+        self.price_completion = _env_float("ZG_PRICE_USD_COMPLETION")
+        self.extra_body = self._load_extra_body()
 
         self._opener = urllib.request.build_opener(_NoRedirect)
         self._lock = threading.Lock()
         self._usage: dict[str, Any] = {
             "calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
-            "total_tokens": 0, "cost_usd": None, "cost_is_estimate": False,
+            "total_tokens": 0, "reasoning_tokens": 0, "cost_usd": None,
+            "cost_is_estimate": False, "last_request_id": None,
         }
+
+    # request fields ZG_EXTRA_BODY may never override
+    _PROTECTED_BODY_KEYS = {"model", "messages", "max_tokens", "max_completion_tokens",
+                            "stream", "temperature", "provider"}
+
+    @classmethod
+    def _load_extra_body(cls) -> dict[str, Any]:
+        """Optional model-specific request options, as a JSON object in
+        ZG_EXTRA_BODY, e.g. {"chat_template_kwargs": {"enable_thinking": false},
+        "response_format": {"type": "json_object"}}. Cannot touch the model,
+        messages, output cap, temperature, streaming or routing."""
+        raw = os.environ.get("ZG_EXTRA_BODY", "").strip()
+        if not raw:
+            return {}
+        try:
+            extra = json.loads(raw)
+        except ValueError as exc:
+            raise LLMConfigError("ZG_EXTRA_BODY must be a JSON object.") from exc
+        if not isinstance(extra, dict):
+            raise LLMConfigError("ZG_EXTRA_BODY must be a JSON object.")
+        bad = sorted(set(extra) & cls._PROTECTED_BODY_KEYS)
+        if bad:
+            raise LLMConfigError(f"ZG_EXTRA_BODY may not set: {', '.join(bad)}.")
+        return extra
 
     def __repr__(self) -> str:  # never reveal the key
         return f"ZeroGClient(model={self.model!r}, base_url={self.base_url!r})"
@@ -309,6 +339,8 @@ class ZeroGClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         payload = json.dumps({
+            # model-specific options first, so the fields below always win
+            **self.extra_body,
             "model": self.model,
             "messages": messages,
             "temperature": self.temperature if self.temperature is not None else temperature,
@@ -360,7 +392,9 @@ class ZeroGClient:
                 "0G returned an unexpected response shape.",
                 request_id=header_request_id))
 
-        request_id = body.get("request_id") or body.get("id") or header_request_id
+        # the Router's request id (x-request-id) is what 0G support asks for;
+        # body.id is the per-completion id
+        request_id = body.get("request_id") or header_request_id or body.get("id")
         try:
             content = body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError):
@@ -381,15 +415,18 @@ class ZeroGClient:
         ct = int(usage.get("completion_tokens") or 0)
         tt = int(usage.get("total_tokens") or (pt + ct))
 
+        reasoning_tokens = int(usage.get("reasoning_tokens") or 0)
         cost = usage.get("cost", body.get("cost"))
         is_estimate = False
         if not isinstance(cost, (int, float)) or isinstance(cost, bool):
             cost = None
-            # no cost from the provider: derive an UPPER BOUND from the price
-            # ceilings, if the operator configured them
-            if self.max_price_prompt is not None or self.max_price_completion is not None:
-                cost = ((pt * (self.max_price_prompt or 0.0))
-                        + (ct * (self.max_price_completion or 0.0))) / 1_000_000
+            # 0G does not return a cost: estimate it from the model's list price
+            # (ZG_PRICE_USD_*), else bound it from the price ceilings
+            p_prompt = self.price_prompt if self.price_prompt is not None else self.max_price_prompt
+            p_compl = (self.price_completion if self.price_completion is not None
+                       else self.max_price_completion)
+            if p_prompt is not None or p_compl is not None:
+                cost = ((pt * (p_prompt or 0.0)) + (ct * (p_compl or 0.0))) / 1_000_000
                 is_estimate = True
 
         with self._lock:
@@ -398,16 +435,18 @@ class ZeroGClient:
             u["prompt_tokens"] += pt
             u["completion_tokens"] += ct
             u["total_tokens"] += tt
+            u["reasoning_tokens"] += reasoning_tokens
+            u["last_request_id"] = request_id
             if cost is not None:
                 u["cost_usd"] = round((u["cost_usd"] or 0.0) + cost, 8)
                 u["cost_is_estimate"] = u["cost_is_estimate"] or is_estimate
 
         logger.info(
-            "0g inference ok model=%s request_id=%s prompt_tokens=%s "
-            "completion_tokens=%s total_tokens=%s cost_usd=%s%s",
-            self.model, request_id, pt, ct, tt,
+            "0g inference ok model=%s request_id=%s completion_id=%s prompt_tokens=%s "
+            "completion_tokens=%s reasoning_tokens=%s total_tokens=%s cost_usd=%s%s",
+            self.model, request_id, body.get("id"), pt, ct, reasoning_tokens, tt,
             "unknown" if cost is None else f"{cost:.8f}",
-            " (estimated upper bound)" if is_estimate else "")
+            " (estimated)" if is_estimate else "")
 
     def usage_summary(self) -> dict[str, Any]:
         """Cumulative usage for this client instance (metadata only)."""
@@ -543,133 +582,6 @@ class MockInferenceClient:
 
 
 # --------------------------------------------------------------------------
-# vLLM / Gemma client (OpenAI-compatible chat endpoint) — legacy
-# --------------------------------------------------------------------------
-
-class VLLMClient:
-    """Minimal client for a vLLM server exposing the OpenAI chat API.
-
-    Uses only the standard library (urllib) to avoid extra deps inside the TEE.
-    """
-
-    name = "vllm"
-
-    def __init__(self, base_url: str | None = None, model: str | None = None,
-                 timeout: float = 30.0) -> None:
-        self.base_url = (base_url or os.environ.get("FRAB_VLLM_URL",
-                         "http://localhost:8000/v1")).rstrip("/")
-        self.model = model or os.environ.get("FRAB_GEMMA_MODEL", "google/gemma-2-9b-it")
-        self.timeout = timeout
-
-    def complete(self, prompt: str, *, system: str = "", temperature: float = 0.0,
-                 max_tokens: int = 1024) -> str:
-        import urllib.error
-        import urllib.request
-
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        payload = json.dumps({
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }).encode("utf-8")
-
-        req = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise LLMUnavailable(f"vLLM endpoint unreachable: {exc}") from exc
-        try:
-            return body["choices"][0]["message"]["content"]
-        except (KeyError, IndexError) as exc:
-            raise LLMError(f"Unexpected vLLM response shape: {body}") from exc
-
-
-# --------------------------------------------------------------------------
-# Attested Gemma client (Confidential Space / TEE — stretch path)
-# --------------------------------------------------------------------------
-
-class AttestedGemmaClient:
-    """Talks to Gemma served by vLLM inside a Confidential Space, over an
-    attested, encrypted channel using Google's Prompt Encryption SDK.
-
-    The SDK verifies the enclave's hardware quote + software (image) hash BEFORE
-    any prompt is sent — if attestation fails, the prompt is never transmitted.
-    This is the client side of the codelab's confidential-inference architecture
-    (server side is provisioned by the codelab's setup.sh).
-
-    Config (set after setup.sh outputs them):
-        FRAB_ATTESTED_URL         load balancer URL, e.g. https://<LB_IP>:8000
-        FRAB_ATTESTED_IMAGE_HASH  expected container image hash (attestation policy)
-        FRAB_GEMMA_MODEL          model name served in the enclave
-
-    The prompt_encryption_sdk dependency is OPTIONAL — it is imported lazily so
-    the worker (and its tests) run without it installed. get_client() falls back
-    to offline mode if the SDK or config is missing.
-    """
-
-    name = "attested"
-
-    def __init__(self, url: str | None = None, image_hash: str | None = None,
-                 model: str | None = None, timeout: float = 60.0) -> None:
-        self.url = url or os.environ.get("FRAB_ATTESTED_URL", "")
-        self.image_hash = image_hash or os.environ.get("FRAB_ATTESTED_IMAGE_HASH", "")
-        self.model = model or os.environ.get("FRAB_GEMMA_MODEL", "google/gemma-2-9b-it")
-        self.timeout = timeout
-        if not self.url or not self.image_hash:
-            raise LLMUnavailable(
-                "AttestedGemmaClient needs FRAB_ATTESTED_URL and "
-                "FRAB_ATTESTED_IMAGE_HASH (from the codelab setup.sh output)."
-            )
-        try:
-            # lazy import: the SDK is only needed on the attested path
-            from prompt_encryption_sdk import ConfidentialSDKClient  # type: ignore
-            from prompt_encryption_sdk import AttestationPolicy  # type: ignore
-        except ImportError as exc:  # pragma: no cover - depends on optional dep
-            raise LLMUnavailable(
-                "prompt_encryption_sdk is not installed. Install it on the "
-                "attested-path host (see DEPLOY.md Path B)."
-            ) from exc
-        # TODO(codelab): confirm exact policy/client constructor signature against
-        # the installed SDK version. The shape below follows the codelab's
-        # ConfidentialSDKClient usage (attested TLS + image-hash policy).
-        self._policy = AttestationPolicy(image_hash=self.image_hash)
-        self._client = ConfidentialSDKClient(base_url=self.url, policy=self._policy)
-
-    def complete(self, prompt: str, *, system: str = "", temperature: float = 0.0,
-                 max_tokens: int = 1024) -> str:
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        # The SDK performs the attested handshake, then sends this like an
-        # OpenAI-compatible chat request. Response shape mirrors vLLM's.
-        resp = self._client.post(
-            "/v1/chat/completions",
-            json={
-                "model": self.model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            },
-            timeout=self.timeout,
-        )
-        try:
-            return resp.json()["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, ValueError) as exc:
-            raise LLMError(f"Unexpected attested response shape: {exc}") from exc
-
-
-# --------------------------------------------------------------------------
 # Factory + JSON helper
 # --------------------------------------------------------------------------
 
@@ -678,7 +590,7 @@ _ZG_ALIASES = {"0g", "zg", "0g-private", "0g_private"}
 
 def provider_kind(kind: str | None = None) -> str:
     """Resolve the configured provider: argument > LLM_PROVIDER > FRAB_LLM
-    (legacy name) > offline."""
+    > offline."""
     return (kind or os.environ.get("LLM_PROVIDER") or os.environ.get("FRAB_LLM")
             or "offline").strip().lower()
 
@@ -697,31 +609,25 @@ def llm_mode_name() -> str:
 
 
 def get_client(kind: str | None = None) -> LLMClient:
-    """Return an LLM client, selected by LLM_PROVIDER (legacy: FRAB_LLM).
+    """Return an LLM client, selected by LLM_PROVIDER (FRAB_LLM also accepted).
 
         offline (default) -> OfflineLLMClient (deterministic, no model)
         0g                -> MockInferenceClient while LLM_MOCK_MODE is true
                              (the default), ZeroGClient (real, private-mode
                              inference) when LLM_MOCK_MODE=false
-        vllm              -> VLLMClient (legacy GPU VM, OpenAI-compatible)
-        attested          -> AttestedGemmaClient (Confidential Space/TEE)
 
-    Constructing a client performs no network I/O. Selecting 0g in real mode with
-    missing/invalid configuration raises LLMConfigError instead of quietly
-    falling back: a silent fallback would hide that inference is not private.
+    Constructing a client performs no network I/O. Misconfiguration (an unknown
+    provider, or 0g in real mode without a key/model) raises LLMConfigError
+    instead of quietly falling back: a silent fallback would hide which model,
+    if any, actually produced the reasoning.
     """
     kind = provider_kind(kind)
     if kind in _ZG_ALIASES:
         return MockInferenceClient() if mock_mode_enabled() else ZeroGClient()
-    if kind == "vllm":
-        return VLLMClient()
-    if kind == "attested":
-        try:
-            return AttestedGemmaClient()
-        except LLMUnavailable:
-            # not configured / SDK absent -> safe deterministic fallback
-            return OfflineLLMClient()
-    return OfflineLLMClient()
+    if kind == "offline":
+        return OfflineLLMClient()
+    raise LLMConfigError(
+        f"Unknown LLM_PROVIDER {kind!r}. Use 'offline' or '0g'.")
 
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
