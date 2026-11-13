@@ -4,7 +4,7 @@ Every agent produces a structured, validated object — never free text that the
 next stage has to parse loosely. These schemas are the contract between agents
 and the backbone the evidence-grounding validator checks against.
 
-Enums are plain string constants (kept simple for JSON + TEE friendliness).
+Enums are plain string constants (kept simple for JSON).
 Each dataclass provides:
   * to_dict() — JSON-serializable output
   * validate() — raises SchemaError on structural violations

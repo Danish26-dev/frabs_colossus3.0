@@ -1,7 +1,7 @@
-"""Autonomous agentic investigation loop (autonomous investigation agent).
+"""Autonomous agentic investigation loop (SH-FIN-01: "autonomous ... agent").
 
 This is the genuinely agentic layer. Instead of a hardcoded Watchman -> Detective
--> Jurist -> Scribe sequence, the LLM (Gemma) drives the investigation:
+-> Jurist -> Scribe sequence, the LLM drives the investigation:
 
     reason -> select a tool -> observe the (deterministic) result -> adapt -> ...
     -> conclude with a proposed recommendation

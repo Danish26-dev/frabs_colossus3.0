@@ -1,13 +1,13 @@
 """The specialist agents (Phase 1).
 
 Each agent has a distinct responsibility, consumes structured input, and returns
-a validated schema object. The same Gemma model can back several agents; the
+a validated schema object. The same model can back several agents; the
 differentiation is role + tools + data access + output schema, not the model.
 
 Design principle (the governing rule): the deterministic layer (tools, features,
 scoring, patterns) is the SOURCE OF TRUTH. Agents call tools to get facts, then
 the LLM only narrates/phrases those facts. In offline mode the narration is
-assembled deterministically, so behaviour is identical with or without Gemma.
+assembled deterministically, so behaviour is identical with or without a model.
 
 Agents here:
   Watchman  — triage + investigation-tier routing (from deterministic features)
