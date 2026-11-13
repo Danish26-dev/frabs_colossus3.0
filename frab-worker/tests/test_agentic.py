@@ -1,6 +1,6 @@
 """Agentic loop tests using a scripted mock LLM.
 
-The mock plays the role of Gemma: it emits AgentAction JSON deciding which tool
+The mock plays the role of the model: it emits AgentAction JSON deciding which tool
 to call, then concludes. This proves the autonomous reason->act->observe->adapt
 loop works end-to-end WITHOUT a real model, and that:
   * numbers still come from deterministic tools,
@@ -23,9 +23,9 @@ from frab_worker.validator import validate_result
 
 
 class ScriptedLLM:
-    """A fake Gemma that returns a fixed sequence of agent actions as JSON."""
+    """A fake model that returns a fixed sequence of agent actions as JSON."""
 
-    name = "vllm"  # pretend to be a live model so agentic mode activates
+    name = "scripted"  # any non-offline name activates agentic mode
 
     def __init__(self, actions: list[dict]):
         self._actions = list(actions)
