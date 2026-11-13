@@ -4,8 +4,8 @@ Answers to Danish's integration questions, with exact field shapes from the
 worker's actual code (not assumptions). Pair this with `CONTRACT.md`.
 
 Worker base URL: set `VITE_FRAB_WORKER_URL` to the worker's HTTPS Cloud Run URL
-(`https://<service>-<hash>.asia-south1.run.app`, no trailing slash). It is stable
-across restarts. The old VM / Cloudflare tunnel URLs no longer exist.
+(`https://frab-worker-379796489354.asia-south1.run.app`, no trailing slash). It is
+stable across restarts.
 
 Revision: updated for the Cloud Run deployment, 0G Private Computer inference,
 the optional shared token and durable result storage. Everything under
@@ -33,8 +33,8 @@ Response: `{ "case_id": "CASE0001", "status": "STARTED" }`
 
 ### CORS — DONE, including on the SSE endpoint
 Allowed by default: `http://localhost:8080`, `http://localhost:3000`,
-`http://127.0.0.1:8080`, `https://frab-frontend-rkv7mouqhq-el.a.run.app`,
-`https://frab-frontend-200002205070.asia-south1.run.app`. Override the whole list
+`http://127.0.0.1:8080`, `https://frab-frontend-rkv7mouqhq-el.a.run.app`.
+Override the whole list
 with `FRAB_CORS_ORIGINS` (comma-separated). Any other origin gets no CORS header.
 SSE responses send `Cache-Control: no-cache`, `Connection: keep-alive`,
 `X-Accel-Buffering: no`.
