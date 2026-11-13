@@ -70,8 +70,6 @@ export function useAccountDrainProtection(caseId: string | undefined): Protectio
       alert_id: ACCOUNT_DRAIN_CONTEXT.alertId,
       frab_recommendation: "ESCALATE",
       risk_tier: "HIGH",
-      verification_question: ACCOUNT_DRAIN_CONTEXT.verificationQuestion,
-      verification_expected_answer: ACCOUNT_DRAIN_CONTEXT.verificationAnswer,
     });
     setState("CALL_IN_PROGRESS");
     push(PROTECTION_EVENTS.VOICE_STARTED, "Outbound verification call placed");

@@ -34,13 +34,6 @@ export const ACCOUNT_DRAIN_CONTEXT = {
   triggerAmount: 9283.93,
   /** The NEW-relationship mule collection account — the one placed under protection. */
   protectedBeneficiary: "C888000007",
-  /**
-   * Identity verification factor for the voice call. The service requires an
-   * approved Q&A or the assistant hangs up mid-call. This is the factor the
-   * customer is asked to confirm before the interview proceeds.
-   */
-  verificationQuestion: "Which city is your account registered in?",
-  verificationAnswer: "Bangalore",
 } as const;
 
 /**

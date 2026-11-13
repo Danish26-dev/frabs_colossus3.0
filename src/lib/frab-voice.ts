@@ -6,22 +6,16 @@
  *
  * Contract (confirmed with the voice service owner):
  *   POST /api/cases/{case_id}/voice-escalation
- *        body: { alert_id, frab_recommendation, risk_tier,
- *                verification_question, verification_expected_answer,
- *                customer_phone? }
+ *        body: { alert_id, frab_recommendation, risk_tier, known_evidence? }
  *        -> { case_id, call_id, status }
  *   GET  /api/cases/{case_id}/voice
  *        -> VoiceState (status, verification, outcome, summary, statements,
  *           unresolved_questions, analyst_attention, recommended_actions,
  *           transcript, recording_reference, timeline[])
  *
- * IMPORTANT: the service REQUIRES verification_question +
- * verification_expected_answer. Without an approved verification factor the
- * assistant has nothing to verify identity against and hangs up mid-call. We
- * always send them (a caller-supplied Q&A wins; otherwise a safe default).
- *
- * The service resolves customer phone + verification Q/A itself (backend is the
- * source of truth) — the frontend only sends alert_id + recommendation + risk.
+ * The service resolves the customer phone and builds the identity check from the
+ * bank's customer record itself, so the expected answer never reaches the browser.
+ * The frontend only sends alert_id + recommendation + risk.
  *
  * Everything is gated on VITE_FRAB_VOICE_URL: until it is set, IS_VOICE_LIVE is
  * false and the Case Book keeps its existing "not connected" behaviour.
@@ -102,23 +96,11 @@ export interface VoiceStartRequest {
   alert_id: string;
   frab_recommendation: string;
   risk_tier: string;
-  /**
-   * Identity verification factor for the call. REQUIRED by the service — if
-   * omitted here, startVoiceEscalation fills a safe default so the assistant
-   * always has an approved factor and never hangs up mid-call.
-   */
-  verification_question?: string;
-  verification_expected_answer?: string;
+  /** Optional evidence the assistant may reference. */
+  known_evidence?: string[];
   /** Optional demo override; normally the service resolves the phone itself. */
   customer_phone?: string;
 }
-
-/**
- * Default verification factor used when a caller does not supply one. The
- * service requires a Q&A pair; this keeps a call from being dropped mid-way.
- */
-export const DEFAULT_VERIFICATION_QUESTION = "Which city is your account registered in?";
-export const DEFAULT_VERIFICATION_ANSWER = "Bangalore";
 
 export interface VoiceStartResponse {
   case_id: string;
@@ -134,19 +116,12 @@ export async function startVoiceEscalation(
   req: VoiceStartRequest,
 ): Promise<VoiceStartResponse> {
   if (!VOICE_BASE_URL) throw new Error("No voice service configured (VITE_FRAB_VOICE_URL unset)");
-  // Always send a verification factor — the service requires it or the call is
-  // dropped mid-way. Caller-supplied Q&A wins; otherwise use the safe default.
-  const body: VoiceStartRequest = {
-    ...req,
-    verification_question: req.verification_question || DEFAULT_VERIFICATION_QUESTION,
-    verification_expected_answer: req.verification_expected_answer || DEFAULT_VERIFICATION_ANSWER,
-  };
   const res = await fetch(
     `${VOICE_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/voice-escalation`,
     {
       method: "POST",
       headers: voiceHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify(body),
+      body: JSON.stringify(req),
     },
   );
   if (res.status === 401) throw new Error("voice escalation rejected: missing or wrong token (401)");
