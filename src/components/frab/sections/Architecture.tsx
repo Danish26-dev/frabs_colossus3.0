@@ -29,10 +29,10 @@ export function ArchitectureSection() {
         <>
           FROM SYNTHETIC BANK
           <br />
-          <span className="text-lime">TO CONFIDENTIAL INFERENCE.</span>
+          <span className="text-lime">TO PRIVATE INFERENCE.</span>
         </>
       }
-      lead="The synthetic bank produces real alerts. The FRAB backend manages the case. The investigation executes inside a confidential workspace."
+      lead="The synthetic bank produces real alerts. The FRAB backend manages the case. The model call runs on 0G Private Computer."
     >
       <div className="grid gap-8 lg:grid-cols-3">
         <Layer tag="A" name="SYNTHETIC BANK">
@@ -88,43 +88,30 @@ export function ArchitectureSection() {
           </ul>
         </Layer>
 
-        <Layer tag="C" name="CONFIDENTIAL COMPUTE">
+        <Layer tag="C" name="INFERENCE">
           <div className="flex flex-col items-center">
-            <Node title="FRAB BACKEND" className="w-full" />
-            <VArrow />
-            <Node title="PROMPT ENCRYPTION SDK" className="w-full" />
-            <VArrow />
-            <Node title="ATTESTED TLS" className="w-full" />
-            <VArrow />
-            <div className="w-full border border-lime/60 bg-lime/[0.05] p-4">
-              <Mono className="block text-center text-[10px] text-lime">
-                CONFIDENTIAL VM / CONFIDENTIAL SPACE
-              </Mono>
-              <div className="mt-4 border border-border bg-background/50 p-3">
-                <Mono className="block text-center text-[10px] text-foreground">
-                  FRAB WORKER
-                </Mono>
-                <div className="mt-3 grid gap-px bg-border">
-                  {["CALLING AGENT", "WATCHMAN", "DETECTIVE", "JURIST", "SCRIBE"].map((a) => (
-                    <div key={a} className="flex items-center gap-2 bg-surface px-3 py-2">
-                      <StatusDot />
-                      <Mono className="text-[9px] text-foreground/80">{a}</Mono>
-                    </div>
-                  ))}
-                </div>
+            <Node title="FRAB WORKER (CLOUD RUN)" className="w-full" />
+            <div className="w-full border border-border bg-background/50 p-3">
+              <div className="grid gap-px bg-border">
+                {["CALL ESCALATION", "WATCHMAN", "DETECTIVE", "JURIST", "SCRIBE"].map((a) => (
+                  <div key={a} className="flex items-center gap-2 bg-surface px-3 py-2">
+                    <StatusDot />
+                    <Mono className="text-[9px] text-foreground/80">{a}</Mono>
+                  </div>
+                ))}
               </div>
             </div>
             <VArrow />
-            <Node title="vLLM" className="w-full" />
+            <Node title="HTTPS" className="w-full" />
             <VArrow />
-            <Node title="GEMMA" tone="lime" className="w-full" />
+            <Node title="0G PRIVATE COMPUTER" tone="lime" className="w-full" />
           </div>
 
           <dl className="mt-8 space-y-4 border-t border-border pt-5">
             {[
-              ["TEE", "Protected investigation execution."],
-              ["PROMPT ENCRYPTION", "Attested encrypted communication."],
-              ["GEMMA + vLLM", "Private model inference inside the protected workload."],
+              ["PRIVATE TRUST MODE", "Only the model call runs on 0G Private Computer, in TEE enclaves as reported by the provider."],
+              ["OUTSIDE THE ENCLAVE", "The worker, agents, tools, Firestore, the voice service and this website."],
+              ["ATTESTATION", "Not verified by FRAB yet. Planned."],
             ].map(([k, v]) => (
               <div key={k}>
                 <Mono className="block text-[9px] text-lime">{k}</Mono>
