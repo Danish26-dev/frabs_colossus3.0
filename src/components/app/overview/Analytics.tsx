@@ -29,7 +29,8 @@ import {
   type ScenarioRow,
   type ScenarioValidation,
 } from "../../../lib/frab-analytics";
-import { EmptyBlock, ErrorBlock, LoadingBlock, Mono, PanelShell, SourceTag } from "../ui";
+import { useWorkerHealth } from "../../../hooks/useWorkerHealth";
+import { Dot, EmptyBlock, ErrorBlock, LoadingBlock, Mono, PanelShell, SourceTag } from "../ui";
 
 const C = {
   lime: "#C7F000",
@@ -151,6 +152,49 @@ function BarRow({
 }
 
 /* --------------------------------------------------------- main section */
+
+/**
+ * Where the model runs, stated plainly. Model inference is served by 0G Private Computer in
+ * Private trust mode; everything else (worker, agents, tools, storage, this console) runs on
+ * Cloud Run / Firestore and is outside that boundary. FRAB does not verify attestation itself.
+ */
+function PrivateInferenceBlock() {
+  const { badge } = useWorkerHealth();
+  const items: [string, string][] = [
+    ["INFERENCE PROVIDER", "0G Private Computer"],
+    ["TRUST MODE", "Private"],
+    ["RUNTIME STATE", badge.short],
+    ["MODEL INFERENCE", "0G enclaves (as reported by the provider)"],
+    ["WORKER · AGENTS · TOOLS", "Cloud Run (outside the enclave)"],
+    ["CASE STORAGE", "Firestore (outside the enclave)"],
+    ["ATTESTATION CHECK", "Not verified by FRAB"],
+    ["ROLE OF THE MODEL", "Reasoning / explanation"],
+  ];
+  return (
+    <div className="mt-8 border border-border bg-surface px-5 py-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Mono className="text-[9px] text-lime">PRIVATE INFERENCE</Mono>
+        <span className="flex items-center gap-2">
+          <Dot state={badge.dot} />
+          <Mono className="text-[9px] text-muted-foreground">{badge.long}</Mono>
+        </span>
+      </div>
+      <p className="mt-3 max-w-2xl text-[12px] leading-relaxed text-technical">
+        Deterministic tools calculate measurable features and scores. The language model reasons
+        over that evidence and writes the explanation; it never overrides the computed numbers.
+        Only the model call runs on 0G Private Computer.
+      </p>
+      <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-4">
+        {items.map(([k, v]) => (
+          <div key={k}>
+            <Mono className="block text-[8px] text-muted-foreground">{k}</Mono>
+            <Mono className="mt-1 block text-[9px] text-foreground">{v}</Mono>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function AnalyticsOverview() {
   const navigate = useNavigate();
@@ -405,30 +449,8 @@ export function AnalyticsOverview() {
           </div>
         ) : null}
 
-        {/* confidential compute block */}
-        <div className="mt-8 border border-border bg-surface px-5 py-5">
-          <Mono className="text-[9px] text-lime">CONFIDENTIAL COMPUTE</Mono>
-          <p className="mt-3 max-w-2xl text-[12px] leading-relaxed text-technical">
-            Sensitive investigation processing runs inside the confidential worker. Deterministic
-            tools calculate measurable features and scores; Gemma reasons over the evidence and
-            produces the explanation.
-          </p>
-          <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 md:grid-cols-3">
-            {[
-              ["ENVIRONMENT", "Google Cloud Confidential VM"],
-              ["COMPUTE", "8 vCPU · 32 GB RAM"],
-              ["ACCELERATOR", "NVIDIA L4 · 24 GB VRAM"],
-              ["REGION", "us-central1-a"],
-              ["MODEL", "Gemma-2-2B (vLLM)"],
-              ["ROLE", "Reasoning / explanation"],
-            ].map(([k, v]) => (
-              <div key={k}>
-                <Mono className="block text-[8px] text-muted-foreground">{k}</Mono>
-                <Mono className="mt-1 block text-[9px] text-foreground">{v}</Mono>
-              </div>
-            ))}
-          </div>
-        </div>
+        {/* private inference block */}
+        <PrivateInferenceBlock />
       </section>
     </>
   );

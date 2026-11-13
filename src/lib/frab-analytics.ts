@@ -34,6 +34,8 @@ import {
   fetchWorkerResult,
   fetchWorkerStatus,
 } from "./frab-worker";
+import { VOICE_BASE_URL } from "./frab-voice";
+import { normalizeLlmMode } from "./frab-inference";
 
 /* ------------------------------------------------------------------ types */
 
@@ -397,7 +399,7 @@ export async function fetchSystemHealth(): Promise<HealthEntry[]> {
     }
   }
 
-  // Investigation worker + Gemma + SSE.
+  // Investigation worker + model inference + SSE.
   if (WORKER_BASE_URL) {
     const wk = await ping(`${WORKER_BASE_URL}/health`);
     const body = (wk.body ?? {}) as { llm_mode?: string; version?: string };
@@ -417,17 +419,25 @@ export async function fetchSystemHealth(): Promise<HealthEntry[]> {
       state: workerState,
       detail: wk.ok ? "/investigate/{id}/events" : null,
     });
+    // Inference runs on 0G Private Computer. The worker's /health says which mode it is in.
+    const mode = normalizeLlmMode(body.llm_mode);
     entries.push({
-      label: "GEMMA INFERENCE",
-      state: workerState,
-      detail: wk.ok ? (body.llm_mode ? body.llm_mode.toUpperCase() : "UNKNOWN") : null,
+      label: "MODEL INFERENCE (0G)",
+      state: !wk.ok ? "NOT_CONNECTED" : mode === "0g" ? "CONNECTED" : mode === "0g-mock" ? "DEGRADED" : "NOT_CONNECTED",
+      detail: !wk.ok
+        ? null
+        : mode === "0g"
+          ? "PRIVATE TRUST MODE · LIVE"
+          : mode === "0g-mock"
+            ? "MOCK MODE · SCRIPTED, NO MODEL CALL"
+            : "NO INFERENCE CONFIGURED",
     });
   } else {
     for (const label of [
       "INVESTIGATION WORKER",
       "INVESTIGATION API",
       "SSE EVENT STREAM",
-      "GEMMA INFERENCE",
+      "MODEL INFERENCE (0G)",
     ]) {
       entries.push({ label, state: "NOT_CONNECTED", detail: "VITE_FRAB_WORKER_URL unset" });
     }
@@ -435,12 +445,25 @@ export async function fetchSystemHealth(): Promise<HealthEntry[]> {
 
   // Not verifiable from the frontend — reported honestly as unknown/not connected.
   entries.push({ label: "FIRESTORE", state: "UNKNOWN", detail: "no frontend probe" });
+  // FRAB does not verify the enclave's attestation itself, so this is never reported as connected.
   entries.push({
-    label: "CONFIDENTIAL VM ATTESTATION",
+    label: "ENCLAVE ATTESTATION (FRAB-VERIFIED)",
     state: "NOT_CONNECTED",
-    detail: "not deployed",
+    detail: "not verified by FRAB",
   });
-  entries.push({ label: "VOICE ESCALATION", state: "NOT_CONNECTED", detail: "not connected" });
+
+  // Voice escalation service (open /health).
+  if (VOICE_BASE_URL) {
+    const vc = await ping(`${VOICE_BASE_URL}/health`);
+    const vb = (vc.body ?? {}) as { vapi_mode?: string };
+    entries.push({
+      label: "VOICE ESCALATION",
+      state: vc.ok ? "CONNECTED" : "NOT_CONNECTED",
+      detail: vc.ok ? (vb.vapi_mode ? `VAPI ${vb.vapi_mode.toUpperCase()}` : "up") : null,
+    });
+  } else {
+    entries.push({ label: "VOICE ESCALATION", state: "NOT_CONNECTED", detail: "VITE_FRAB_VOICE_URL unset" });
+  }
 
   return entries;
 }
