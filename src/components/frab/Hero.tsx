@@ -16,7 +16,7 @@ const METRICS: Metric[] = [
   { value: "9,991", label: "TRANSACTIONS" },
   { value: "300", label: "CUSTOMER PROFILES" },
   { value: "6", label: "COORDINATED AGENTS" },
-  { value: "GEMMA-2-2B", label: "REASONING VIA vLLM" },
+  { value: "0G", label: "PRIVATE INFERENCE" },
 ];
 
 const HEADLINE: { w: string; lime?: boolean }[] = [

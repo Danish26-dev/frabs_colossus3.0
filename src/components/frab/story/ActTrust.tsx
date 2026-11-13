@@ -15,15 +15,15 @@ const STATUS: Record<Status, string> = {
 
 const ENVS: { t: string; s: Status; d: string; extra?: string }[] = [
   {
-    t: "CONFIDENTIAL COMPUTING",
+    t: "PRIVATE INFERENCE",
     s: "PROTOTYPED",
-    d: "The investigation worker is hosted on a GCP Confidential VM so sensitive processing sits inside a protected boundary.",
-    extra: "Remote attestation and an encrypted prompt channel are planned, not deployed.",
+    d: "The model call is served by 0G Private Computer in Private trust mode, which the provider runs in TEE enclaves. The worker, tools and storage run on Cloud Run and Firestore, outside that boundary.",
+    extra: "FRAB does not verify enclave attestation itself yet. That check is planned.",
   },
   {
     t: "CONTROLLED ACCESS",
     s: "IMPLEMENTED",
-    d: "The console's investigation workspace opens only while a case is active, and the voice provider key stays server-side.",
+    d: "The console's investigation workspace opens only while a case is active. The worker and voice APIs reject requests without a shared token (a deterrent, not a user login), and the voice provider key stays server-side.",
   },
   {
     t: "EVIDENCE & AUDITABILITY",

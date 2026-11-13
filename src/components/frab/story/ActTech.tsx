@@ -31,7 +31,7 @@ interface Layer {
   n: string;
   name: string;
   status: Status;
-  inside: boolean; // inside the confidential-VM boundary (prototype)
+  inside: boolean; // the model call: runs inside the 0G Private Computer enclave boundary
   what: string;
   role: string;
   note?: string;
@@ -63,6 +63,7 @@ const LAYERS: Layer[] = [
     inside: true,
     what: "The Supervisor sequences Watchman → Detective → Jurist → Scribe, tracks investigation state and handles partial failures.",
     role: "Controls investigation progression and final case compilation.",
+    note: "Runs on Cloud Run, outside the inference enclave.",
   },
   {
     n: "04",
@@ -71,7 +72,7 @@ const LAYERS: Layer[] = [
     inside: true,
     what: "Watchman, Detective, Jurist and Scribe run inside the worker. Call Escalation is delivered by a separate voice service.",
     role: "Each specialist produces its own output for the case.",
-    note: "The voice service (Vapi adapter) runs outside the confidential boundary.",
+    note: "The voice service (Vapi adapter) is a separate Cloud Run service.",
   },
   {
     n: "05",
@@ -83,12 +84,12 @@ const LAYERS: Layer[] = [
   },
   {
     n: "06",
-    name: "AI REASONING — GEMMA",
+    name: "AI REASONING — 0G PRIVATE COMPUTER",
     status: "IMPLEMENTED",
     inside: true,
-    what: "Gemma-2-2B served through vLLM on an NVIDIA L4 GPU. It reasons over the evidence the tools produce.",
-    role: "Gemma reasons over evidence; deterministic tools do the measuring.",
-    note: "As reported by the console's compute panel.",
+    what: "Model inference is served by 0G Private Computer in Private trust mode, inside the provider's TEE enclaves as reported by the provider. The model reasons over the evidence the tools produce. The worker can also run in a mock mode that calls no model.",
+    role: "The model reasons over evidence; deterministic tools do the measuring.",
+    note: "The console reads the worker's health to show whether inference is live or in mock mode.",
   },
   {
     n: "07",
@@ -111,19 +112,19 @@ const LAYERS: Layer[] = [
 
 const CONFIDENTIAL: { t: string; s: Status; d: string }[] = [
   {
-    t: "GCP CONFIDENTIAL VM",
-    s: "PROTOTYPED",
-    d: "Worker host: 8 vCPU, 32 GB RAM, NVIDIA L4 (24 GB), us-central1-a.",
+    t: "0G PRIVATE COMPUTER (PRIVATE TRUST MODE)",
+    s: "IMPLEMENTED",
+    d: "The model call is served by 0G in Private trust mode. When the worker has no inference key it runs in a mock mode that calls no model; the console shows which.",
   },
   {
-    t: "REMOTE ATTESTATION",
-    s: "PLANNED",
-    d: "TEE attestation is not deployed. The console reports it as not connected.",
+    t: "CLOUD RUN SERVICES AND FIRESTORE",
+    s: "IMPLEMENTED",
+    d: "The worker and voice service run on Cloud Run and cases are stored in Firestore. These are outside the enclave boundary.",
   },
   {
-    t: "ENCRYPTED PROMPT CHANNEL",
+    t: "ATTESTATION CHECKED BY FRAB",
     s: "PLANNED",
-    d: "Designed, not deployed. No security guarantee is claimed for it today.",
+    d: "Any sealing or attestation is reported by the provider. FRAB does not independently verify it yet and claims no guarantee beyond that.",
   },
 ];
 
@@ -144,7 +145,7 @@ export default function ActTech() {
           Intelligence built on a <span className="text-lime">structured foundation.</span>
         </h2>
         <p className="mt-6 max-w-2xl text-sm leading-relaxed text-muted-foreground md:text-base">
-          Gemma reasons over evidence; deterministic tools do the measuring. Select a layer to see
+          The model reasons over evidence; deterministic tools do the measuring. Select a layer to see
           its role and exactly how far it has been built.
         </p>
 
@@ -192,8 +193,8 @@ export default function ActTech() {
               })}
             </ol>
             <p className="mt-4 border-l-2 border-warning/70 pl-3 font-mono text-[9px] leading-relaxed tracking-[0.16em] text-muted-foreground">
-              INDENTED LAYERS 03–06 RUN IN THE WORKER ON THE CONFIDENTIAL VM (PROTOTYPE). BANK FEED, API,
-              FIRESTORE, VOICE SERVICE AND THE FRONTEND RUN OUTSIDE IT.
+              ONLY THE MODEL CALL (LAYER 06, INDENTED) RUNS INSIDE 0G PRIVATE COMPUTER. THE WORKER, AGENTS, TOOLS,
+              FIRESTORE, VOICE SERVICE, BANK API AND THIS WEBSITE RUN OUTSIDE THAT BOUNDARY.
             </p>
           </div>
 
@@ -242,7 +243,7 @@ export default function ActTech() {
             </AnimatePresence>
 
             <div className="border border-border bg-surface/40 p-5">
-              <Mono className="text-[10px] text-foreground">CONFIDENTIAL COMPUTING — WHERE IT STANDS</Mono>
+              <Mono className="text-[10px] text-foreground">PRIVATE INFERENCE — WHERE IT STANDS</Mono>
               <ul className="mt-4 space-y-3">
                 {CONFIDENTIAL.map((c) => (
                   <li key={c.t} className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
