@@ -3,10 +3,10 @@
 **Duration:** ~4–5 minutes. **Centerpiece:** the ESCALATE-vs-CLOSE contrast + the guardrail panel.
 
 **Before you start (pre-flight, 30s, off-stage):**
-- Worker healthy: `GET http://34.46.41.101:8080/health` → `{"status":"ok","llm_mode":"vllm"}`
+- Worker healthy: `GET https://frab-worker-379796489354.asia-south1.run.app/health` → `{"status":"ok","llm_mode":"0g"}` (`0g-mock` means no model is called)
 - Frontend up at `http://localhost:8080` (HTTP, not HTTPS — avoids the SSE mixed-content block)
-- **Do NOT restart the VM** — the IP would change and both cases would need re-pointing.
-- Both cases are pre-run and cached on the worker, so results load instantly. Gemma's ~20s only applies to a fresh launch — see the note under Case A.
+- The services scale to zero when idle, and the first request after that is slow. Open the worker `/health` and a case a minute before going on stage.
+- Both cases are pre-run and cached on the worker, so results load instantly. A fresh launch takes ~20s (real model calls) — see the note under Case A.
 
 ---
 
@@ -26,7 +26,7 @@
 5. When it completes, go to **Investigation Results** → open `CASE0007`.
 
 **What to say while the agents work:**
-> "This is running live on a self-hosted Gemma model on a GPU VM. Detective is pulling the customer's real 41-transaction history, computing the deviation, and tracing the beneficiary network right now."
+> "This is running live; the model call is served by 0G Private Computer. Detective is pulling the customer's real 41-transaction history, computing the deviation, and tracing the beneficiary network right now."
 
 **Land on the result — the evidence:**
 - Risk **61/100, HIGH**, pattern **MULE_COLLECTION**.
@@ -60,13 +60,13 @@
 
 ## Close (30s)
 
-> "So: five autonomous agents, driven by a self-hosted LLM, producing audit-ready cases — where the AI's judgment is always cross-checked against deterministic, reproducible numbers. The analyst still makes the final call; FRAB does the investigation. And it's designed to run inside a confidential compute enclave, so the bank's data never leaves a verifiable trusted environment."
+> "So: five autonomous agents, driven by a privately hosted LLM, producing audit-ready cases — where the AI's judgment is always cross-checked against deterministic, reproducible numbers. The analyst still makes the final call; FRAB does the investigation. And it's designed to run inside a confidential compute enclave, so the bank's data never leaves a verifiable trusted environment."
 
 ---
 
 ## Timing / safety notes
 
-- **Fresh launch takes ~15–25s** (real Gemma, multiple LLM calls). The live 3D event stream fills that window so it reads as "the agents are working," not "the app is hanging." If you want zero wait on stage, open the already-cached `CASE0007` / `CASE0010` directly from the Results library instead of launching fresh.
+- **Fresh launch takes ~20s** (real model calls). The live 3D event stream fills that window so it reads as "the agents are working," not "the app is hanging." If you want zero wait on stage, open the already-cached `CASE0007` / `CASE0010` directly from the Results library instead of launching fresh.
 - **If the floor doesn't animate:** the SSE named-event fix should have resolved this. If ordering/timing looks off (vs. shape), check the worker's event emission order.
-- **If the worker looks down:** re-check `/health`. If the VM rebooted, the IP changed — update `VITE_FRAB_WORKER_URL` in `.env` and restart the dev server.
+- **If the worker looks down:** re-check `/health`. If the worker URL changed, update `VITE_FRAB_WORKER_URL` in `.env` and restart the dev server.
 - **One-liner to memorize:** *"The AI can never silently override the computed numbers."*

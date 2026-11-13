@@ -50,7 +50,7 @@ FRAB coordinates six specialised modules, orchestrated by a Supervisor:
               ┌──────────────┐  ┌────────────────────┐   ┌──────────────────┐
               │ Bank API     │  │ Investigation      │   │ Voice service    │
               │ (synthetic   │  │ worker             │   │ (Vapi adapter)   │
-              │  bank data)  │  │ (agents + Gemma)   │   │                  │
+              │  bank data)  │  │ (agents + 0G model)│   │                  │
               └──────────────┘  └────────────────────┘   └──────────────────┘
 ```
 
@@ -64,11 +64,11 @@ The three backends are **separate services and are not part of this repository**
 | Backend API for alerts, cases, transactions, customers | Implemented |
 | Supervisor and four specialist agents (worker) | Implemented |
 | Deterministic analysis tools | Implemented |
-| Gemma reasoning served through vLLM | Implemented |
+| Model inference on 0G Private Computer (Private trust mode); the worker also has a mock mode that calls no model | Implemented |
 | Voice escalation (Call Escalation) | Implemented |
 | Evidence-backed case reports | Implemented |
-| Confidential VM hosting of the worker | Prototyped |
-| Remote attestation and encrypted prompt channel | Planned |
+| Worker and voice services on Cloud Run, case storage in Firestore | Implemented |
+| Enclave attestation verified by FRAB itself | Planned |
 
 All data is **synthetic**. No real customer information is used. This is a prototype, not a production system.
 
@@ -108,9 +108,9 @@ Restart the dev server after changing `.env`. All `VITE_*` values are read at bu
 | --- | --- | --- |
 | `VITE_FRAB_API_URL` | Recommended | Bank API base URL. When unset, the app uses a clearly labelled simulated feed. |
 | `VITE_FRAB_WORKER_URL` | For live investigations | Investigation worker base URL. Must be HTTPS when the app is served over HTTPS. |
-| `VITE_FRAB_WORKER_TOKEN` | Optional | Query-string token for the worker. Note: it ships in the client bundle, so it is not a secret. |
+| `VITE_FRAB_WORKER_TOKEN` | For live investigations | Shared token the worker requires on `/investigate*` (sent as `?token=`). It ships in the client bundle, so it deters casual abuse but is not a secret. |
 | `VITE_FRAB_VOICE_URL` | For voice escalation | Voice service base URL. |
-| `VITE_FRAB_VOICE_TEST_PHONE` | Optional | Demo phone override for voice calls. Keep it out of version control. |
+| `VITE_FRAB_VOICE_TOKEN` | For voice escalation | Shared token the voice service requires (sent as `Authorization: Bearer`). Same caveat as above. |
 
 `.env` is git-ignored. Use `.env.example` as the template.
 
@@ -140,7 +140,8 @@ The voice service contract used by the frontend is documented in [`VOICE_CONTRAC
 - Data is synthetic, and the dataset is fixed. The data explorer follows the bank API by polling, not by a push stream.
 - Live investigations need the investigation worker to be reachable. Without it, those screens show a "not connected" state.
 - The bank API serves the full ledger uncompressed (about 4 MB), so the Data Explorer loads it once per session in chunks.
-- Remote attestation and an encrypted prompt channel for the worker are planned, not deployed.
+- Only the model call runs on 0G Private Computer. The worker, tools, storage and this site run outside that boundary. FRAB does not yet verify the enclave's attestation itself; that is planned.
+- `VITE_*` tokens are compiled into the browser bundle, so they are a deterrent, not user authentication.
 
 ## License
 
