@@ -122,6 +122,11 @@ class VoiceEscalationService:
 
         # 1. authoritative case context (bank bundle, answer-key stripped)
         ctx = self.cases.get_case_context(case_id, alert_id)
+        # a server-built identity check (from the bank record) always wins over
+        # any question/answer the caller sent
+        if ctx.get("verification_question") and ctx.get("verification_expected_answer"):
+            overrides = {k: v for k, v in overrides.items()
+                         if k not in ("verification_question", "verification_expected_answer")}
         # 2. resolve the receiver phone: backend directory is source of truth;
         #    the API layer only passes an override when explicitly allowed.
         phone = customer_phone or ctx.get("_customer_phone", "")

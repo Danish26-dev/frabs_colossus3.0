@@ -189,6 +189,39 @@ def test_reconcile_applies_vapi_result_for_stuck_call():
     assert out.status == CallStatus.COMPLETED and out.verification_status == "VERIFIED"
 
 
+def test_server_built_verification_wins_over_request_values():
+    from frab_voice.case_source import _verification_from_record
+    svc = _mock_service()
+    base = FakeCaseSource()
+    svc.cases = type("WithCity", (), {"get_case_context": lambda self, c, a: {
+        **base.get_case_context(c, a), **_verification_from_record({"city": "Bengaluru"})}})()
+    sent = {}
+    def capture(*, customer_number, variable_values):
+        sent.update(variable_values)
+        return {"id": "call-verif-1", "status": "queued"}
+    svc.vapi.create_call = capture  # type: ignore
+    svc.start_escalation("CASE0007", alert_id="ALT0007", customer_phone="+910000000000",
+                         overrides={"verification_question": "client q",
+                                    "verification_expected_answer": "client a",
+                                    "risk_tier": "HIGH"})
+    assert sent["verification_question"] == "Which city is your account registered in?"
+    assert sent["verification_expected_answer"] == "Bengaluru"
+    assert sent["risk_tier"] == "HIGH"          # other overrides still apply
+    assert not any(k.startswith("_") for k in sent)   # internal keys never sent to Vapi
+
+
+def test_request_verification_used_when_record_has_none():
+    svc = _mock_service()     # FakeCaseSource has no city
+    sent = {}
+    def capture(*, customer_number, variable_values):
+        sent.update(variable_values)
+        return {"id": "call-verif-2", "status": "queued"}
+    svc.vapi.create_call = capture  # type: ignore
+    svc.start_escalation("C2", alert_id="A2", customer_phone="+910000000000",
+                         overrides={"verification_question": "q", "verification_expected_answer": "a"})
+    assert sent["verification_question"] == "q"
+
+
 def test_unconfigured_live_vapi_fails_instead_of_mocking():
     from frab_voice.vapi_client import VapiClient as VC, VapiError
     cfg = VoiceConfig("", "", "", "https://api.vapi.ai", "", "", mock=False)

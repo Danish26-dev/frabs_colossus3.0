@@ -106,4 +106,21 @@ class BankApiCaseSource:
             # so the frontend doesn't have to be authoritative for it.
             "_customer_phone": self.resolve_customer_phone(
                 customer.get("customer_id", "")),
+            # identity check built server-side from the bank record, so the
+            # expected answer never reaches the browser
+            **_verification_from_record(customer),
         }
+
+
+def _verification_from_record(customer: dict[str, Any]) -> dict[str, str]:
+    """One non-sensitive question whose answer is on the bank's customer record.
+    Empty when the record has no usable value (the assistant then ends the call
+    without disclosing case details, as its prompt requires)."""
+    city = str(customer.get("city") or "").strip()
+    if not city:
+        return {}
+    return {
+        "verification_question": "Which city is your account registered in?",
+        "verification_expected_answer": city,
+        "_verification_source": "bank_record",
+    }
