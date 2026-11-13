@@ -1,0 +1,11 @@
+scenario_id,alert_id,case_id,customer_id,scenario_type,severity,expected_reason,trigger_transaction_id,expected_action
+SCN01,ALT0001,CASE0001,C009001507,HIGH_VALUE_NEW_BENEFICIARY,HIGH,Transfer of 781075.61 is ~12x the customer's average outgoing (65089.63) and goes to a beneficiary never used before.,TX009955,ESCALATE
+SCN02,ALT0002,CASE0002,C009005617,VELOCITY_SPIKE,HIGH,"8 outgoing transfers within ~12 minutes, far exceeding the customer's normal frequency.",TX009963,ESCALATE
+SCN03,ALT0003,CASE0003,C009009727,STRUCTURING_PATTERN,HIGH,"Four transfers each just below the 200000 reporting threshold, timed hours apart to a newly-added beneficiary.",TX009967,ESCALATE
+SCN04,ALT0004,CASE0004,C009013837,BEHAVIOUR_DEVIATION,HIGH,Single transaction of 487075.7 is ~25x the customer's historical average (19483.03).,TX009968,ESCALATE
+SCN05,ALT0005,CASE0005,C009017947,NEW_BENEFICIARY,MEDIUM,Significant transfer to a beneficiary the customer has never transacted with before.,TX009969,MONITOR
+SCN06,ALT0006,CASE0006,C009022057,KYC_MISMATCH,HIGH,"Transfer of 950000 is inconsistent with declared KYC profile (income band 0-3L, occupation STUDENT).",TX009970,ESCALATE
+SCN07,ALT0007,CASE0007,C009026167,MULE_PATTERN,HIGH,Destination account C888000007 received transfers from 5 unrelated customers within minutes - classic mule collection pattern.,TX009971,ESCALATE
+SCN08,ALT0008,CASE0008,C009030277,REPEATED_CASHOUT,MEDIUM,A large inbound transfer immediately followed by 5 repeated cash-outs - typical layering / cash extraction.,TX009981,MONITOR
+SCN09,ALT0009,CASE0009,C009034387,CROSS_ACCOUNT_BURST,HIGH,4 different accounts transacted with destination C888000009 within ~4 minutes - coordinated cross-account burst.,TX009982,ESCALATE
+SCN10,ALT0010,CASE0010,C009038497,FALSE_POSITIVE_HISTORY,MEDIUM,"Transfer of 500000 triggered a high-value rule, BUT the customer has 5 prior similar transfers (~480000) to the same beneficiary C999000010 over the past 90 days. Behaviour is consistent with history.",TX009991,CLOSE_FALSE_POSITIVE

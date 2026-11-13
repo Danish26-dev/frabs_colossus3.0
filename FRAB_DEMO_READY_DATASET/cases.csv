@@ -1,0 +1,11 @@
+case_id,customer_id,alert_id,case_type,status,disposition,investigation_note
+CASE0001,C009001507,ALT0001,HIGH_VALUE_NEW_BENEFICIARY,OPEN,PENDING,Large transfer to first-time beneficiary far above historical norm. Recommend escalation / hold pending confirmation.
+CASE0002,C009005617,ALT0002,VELOCITY_SPIKE,OPEN,PENDING,Rapid burst of transfers in a very short window indicates possible account takeover or automated draining.
+CASE0003,C009009727,ALT0003,STRUCTURING_PATTERN,OPEN,PENDING,Classic structuring: amounts deliberately kept under the monitoring threshold. Recommend STR consideration.
+CASE0004,C009013837,ALT0004,BEHAVIOUR_DEVIATION,OPEN,PENDING,Transaction magnitude dramatically deviates from established behaviour baseline.
+CASE0005,C009017947,ALT0005,NEW_BENEFICIARY,OPEN,PENDING,New beneficiary with an above-average but not extreme amount. Monitor; confirm with customer if it recurs.
+CASE0006,C009022057,ALT0006,KYC_MISMATCH,OPEN,PENDING,Transaction value grossly exceeds the customer's declared income capacity. Recommend KYC re-verification and escalation.
+CASE0007,C009026167,ALT0007,MULE_PATTERN,OPEN,PENDING,Common beneficiary funded by multiple unrelated senders in a short window. Strong mule-account indicator; recommend STR.
+CASE0008,C009030277,ALT0008,REPEATED_CASHOUT,OPEN,PENDING,Inbound funds rapidly extracted via repeated cash-outs. Monitor and correlate with source of funds.
+CASE0009,C009034387,ALT0009,CROSS_ACCOUNT_BURST,OPEN,PENDING,Several accounts converge on one destination in a tight window. Investigate coordination / smurfing.
+CASE0010,C009038497,ALT0010,FALSE_POSITIVE_HISTORY,CLOSED,FALSE_POSITIVE,"Rule fired on transaction size, but historical evidence shows an established pattern of similar legitimate transfers to this same beneficiary. Recommend CLOSE as false positive (or MONITOR). Demonstrates contextual investigation, not blind classification."
