@@ -167,6 +167,31 @@ export interface InvestigationResult {
   observedPattern?: string | null;
   /** Deterministic-vs-LLM cross-check — powers the guardrail panel. */
   guardrail?: GuardrailInfo | null;
+  /** Which model produced the reasoning and what it used (case_file.agentic.llm). */
+  llm?: LlmInfo | null;
+  /** Present only when the inference provider failed; the case still completed from the tools. */
+  llmError?: LlmErrorInfo | null;
+}
+
+export interface LlmInfo {
+  provider: string;
+  model: string | null;
+  calls: number | null;
+  totalTokens: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  /** null when the provider did not report a cost. */
+  costUsd: number | null;
+  costIsEstimate: boolean;
+  /** True when the text was scripted (no model call). */
+  mock: boolean;
+}
+
+export interface LlmErrorInfo {
+  code: string | null;
+  message: string | null;
+  httpStatus: number | null;
+  requestId: string | null;
 }
 
 export interface GuardrailInfo {
@@ -837,7 +862,7 @@ import {
 } from "./frab-backend";
 import {
   IS_WORKER_LIVE,
-  fetchWorkerResult,
+  fetchWorkerResultWhenReady,
   fetchWorkerStatus,
   startWorkerInvestigation,
 } from "./frab-worker";
@@ -946,12 +971,13 @@ async function fetchWorkerBackedResult(caseId: string): Promise<InvestigationRes
   const alertCtx = await buildAlertContext(caseId, caseId);
 
   try {
-    const worker = await fetchWorkerResult(caseId);
+    // A 409 means "still running": wait for it instead of starting a second run.
+    const worker = await fetchWorkerResultWhenReady(caseId);
     return mapWorkerResult(caseId, worker, alertCtx);
   } catch {
-    // Likely CASE_NOT_FOUND — start it, then wait for completion.
+    // Likely CASE_NOT_FOUND (404) — start it, then wait for completion.
     await ensureWorkerCaseStarted(caseId, alertCtx);
-    const worker = await fetchWorkerResult(caseId);
+    const worker = await fetchWorkerResultWhenReady(caseId);
     return mapWorkerResult(caseId, worker, alertCtx);
   }
 }

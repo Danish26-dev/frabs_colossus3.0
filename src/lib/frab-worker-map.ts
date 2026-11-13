@@ -23,6 +23,8 @@ import type {
   ResultStatus,
   AgentContribution,
   GuardrailInfo,
+  LlmInfo,
+  LlmErrorInfo,
 } from "./frab-result";
 import type {
   WorkerResult,
@@ -329,6 +331,39 @@ export function mapWorkerResult(
     },
     observedPattern: w.observed_pattern ?? null,
     guardrail: buildGuardrail(w, recommendation),
+    llm: buildLlm(w),
+    llmError: buildLlmError(w),
+  };
+}
+
+/** Provider, model and token usage from case_file.agentic.llm (absent on non-agentic runs). */
+function buildLlm(w: WorkerResult): LlmInfo | null {
+  const llm = w.case_file?.agentic?.llm;
+  if (!llm) return null;
+  const u = llm.usage ?? {};
+  const provider = llm.provider ?? "unknown";
+  return {
+    provider,
+    model: llm.model ?? null,
+    calls: u.calls ?? null,
+    totalTokens: u.total_tokens ?? null,
+    promptTokens: u.prompt_tokens ?? null,
+    completionTokens: u.completion_tokens ?? null,
+    costUsd: u.cost_usd ?? null,
+    costIsEstimate: u.cost_is_estimate ?? false,
+    mock: provider === "0g-mock",
+  };
+}
+
+/** Present only when inference failed. */
+function buildLlmError(w: WorkerResult): LlmErrorInfo | null {
+  const e = w.case_file?.agentic?.llm_error;
+  if (!e) return null;
+  return {
+    code: e.code ?? null,
+    message: e.message ?? null,
+    httpStatus: e.http_status ?? null,
+    requestId: e.request_id ?? null,
   };
 }
 

@@ -137,6 +137,32 @@ export interface WorkerCrosscheck {
   agree?: boolean;
 }
 
+/** Token usage reported for one investigation (null cost = provider did not report one). */
+export interface WorkerLlmUsage {
+  calls?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cost_usd?: number | null;
+  cost_is_estimate?: boolean;
+}
+
+/** Which model produced the reasoning. `provider` is "0g" for real inference or "0g-mock". */
+export interface WorkerLlmInfo {
+  provider?: string;
+  model?: string;
+  usage?: WorkerLlmUsage;
+}
+
+/** Present only when the inference provider failed; the case still completes from the tools. */
+export interface WorkerLlmError {
+  type?: string;
+  code?: string;
+  message?: string;
+  http_status?: number | null;
+  request_id?: string | null;
+}
+
 export interface WorkerAgentic {
   mode?: string;
   steps?: number;
@@ -144,6 +170,8 @@ export interface WorkerAgentic {
   llm_proposed_recommendation?: string;
   llm_justification?: string;
   deterministic_crosscheck?: WorkerCrosscheck;
+  llm?: WorkerLlmInfo;
+  llm_error?: WorkerLlmError;
 }
 
 export interface WorkerCaseFile {
@@ -207,12 +235,67 @@ export async function startWorkerInvestigation(
   return (await res.json()) as WorkerStartResponse;
 }
 
-/** Fetch the full structured investigation result. */
+/** The worker answered 409: the investigation is still running, retry shortly. */
+export class WorkerResultNotReadyError extends Error {
+  constructor() {
+    super("worker result not ready yet (409)");
+    this.name = "WorkerResultNotReadyError";
+  }
+}
+
+/** Any other non-2xx answer from the worker (404 = unknown case, 401 = bad token, ...). */
+export class WorkerHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, what: string) {
+    super(`worker ${what} failed (${status})`);
+    this.name = "WorkerHttpError";
+    this.status = status;
+  }
+}
+
+/** Fetch the full structured investigation result. 409 -> WorkerResultNotReadyError. */
 export async function fetchWorkerResult(caseId: string): Promise<WorkerResult> {
   if (!WORKER_BASE_URL) throw new Error("No worker configured (VITE_FRAB_WORKER_URL unset)");
   const res = await fetch(withToken(`/investigate/${caseId}/result`));
-  if (!res.ok) throw new Error(`worker result failed (${res.status})`);
+  if (res.status === 409) throw new WorkerResultNotReadyError();
+  if (!res.ok) throw new WorkerHttpError(res.status, "result");
   return (await res.json()) as WorkerResult;
+}
+
+/**
+ * Fetch the result, retrying while the worker says 409 (still running). Call this after the
+ * event stream's STREAM_END marker. Any other failure (404, 401, network) is thrown immediately.
+ */
+export async function fetchWorkerResultWhenReady(
+  caseId: string,
+  opts: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<WorkerResult> {
+  const timeoutMs = opts.timeoutMs ?? 90_000;
+  const intervalMs = opts.intervalMs ?? 2_000;
+  const started = Date.now();
+  for (;;) {
+    try {
+      return await fetchWorkerResult(caseId);
+    } catch (err) {
+      if (!(err instanceof WorkerResultNotReadyError) || Date.now() - started > timeoutMs) throw err;
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
+}
+
+/** Open (no token) health probe. `llm_mode` is "0g" (real), "0g-mock" (scripted) or "offline". */
+export type WorkerLlmMode = "0g" | "0g-mock" | "offline";
+export interface WorkerHealth {
+  status: string;
+  version?: string;
+  llm_mode?: WorkerLlmMode | string;
+}
+
+export async function fetchWorkerHealth(signal?: AbortSignal): Promise<WorkerHealth> {
+  if (!WORKER_BASE_URL) throw new Error("No worker configured (VITE_FRAB_WORKER_URL unset)");
+  const res = await fetch(`${WORKER_BASE_URL}/health`, signal ? { signal } : {});
+  if (!res.ok) throw new WorkerHttpError(res.status, "health");
+  return (await res.json()) as WorkerHealth;
 }
 
 /** Worker lifecycle status. */
@@ -256,6 +339,7 @@ const WORKER_EVENT_NAMES = [
   "JURIST_COMPLETED",
   "SCRIBE_COMPILING_REPORT",
   "SCRIBE_COMPLETED",
+  "LLM_ERROR", // inference provider failed; carries code, message, http_status, request_id
   "INVESTIGATION_COMPLETE",
   "PARTIAL",
   "FAILED",
