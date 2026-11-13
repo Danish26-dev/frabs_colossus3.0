@@ -1,0 +1,62 @@
+# Cloud Build → Cloud Run pipeline for the FRAB frontend.
+#
+# Builds the container (baking the public VITE_* config into the client bundle),
+# pushes to Artifact Registry, and deploys to Cloud Run. Override any URL via a
+# substitution, e.g.:
+#   gcloud builds submit --config cloudbuild.yaml \
+#     --substitutions=_VOICE_URL=https://frab-voice-xxxxx.run.app
+#
+# The VITE_* values are BUILD-TIME (baked into the browser bundle), so they are
+# passed as Docker --build-arg here, not as Cloud Run runtime env.
+
+substitutions:
+  _REGION: asia-south1
+  _SERVICE: frab-frontend
+  _REPO: frab
+  _TAG: latest
+  _API_URL: https://frab-git-379796489354.asia-south1.run.app
+  _WORKER_URL: https://beautiful-interaction-reg-listings.trycloudflare.com
+  _VOICE_URL: https://frab-voice-200002205070.asia-south1.run.app
+  _VOICE_TEST_PHONE: ""
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}"
+
+steps:
+  # Build the image with the public config baked into the client bundle.
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - "--build-arg"
+      - "VITE_FRAB_API_URL=${_API_URL}"
+      - "--build-arg"
+      - "VITE_FRAB_WORKER_URL=${_WORKER_URL}"
+      - "--build-arg"
+      - "VITE_FRAB_VOICE_URL=${_VOICE_URL}"
+      - "--build-arg"
+      - "VITE_FRAB_VOICE_TEST_PHONE=${_VOICE_TEST_PHONE}"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}"
+      - "."
+
+  # Push to Artifact Registry.
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}"
+
+  # Deploy to Cloud Run (public, unauthenticated — same as the other services).
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - "${_SERVICE}"
+      - "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}"
+      - "--region=${_REGION}"
+      - "--platform=managed"
+      - "--allow-unauthenticated"
+      - "--port=8080"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
