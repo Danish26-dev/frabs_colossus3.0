@@ -26,8 +26,38 @@ class VapiError(RuntimeError):
 class VapiClient:
     def __init__(self, cfg: VoiceConfig) -> None:
         self.cfg = cfg
-        # mock if explicitly requested OR if real credentials are absent
-        self.mock = cfg.mock or not cfg.configured
+        # mock ONLY when explicitly requested (VAPI_MOCK). Missing credentials
+        # are an error, never a silent switch to simulated calls.
+        self.mock = cfg.mock
+
+    @property
+    def mode(self) -> str:
+        if self.mock:
+            return "mock"
+        return "live" if self.cfg.configured else "unconfigured"
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.cfg.vapi_api_key}",
+                "Content-Type": "application/json"}
+
+    def get_call(self, call_id: str) -> dict[str, Any] | None:
+        """Fetch a call's current state from Vapi (None in mock mode / not found)."""
+        if self.mock or not self.cfg.configured:
+            return None
+        try:
+            resp = httpx.get(f"{self.cfg.vapi_base_url}/call/{call_id}",
+                             headers=self._headers(), timeout=15.0)
+        except httpx.HTTPError as exc:
+            raise VapiError(f"Vapi get-call failed: {type(exc).__name__}") from exc
+        if resp.status_code == 404:
+            return None
+        if resp.status_code >= 300:
+            raise VapiError(f"Vapi get-call error {resp.status_code}")
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise VapiError("Vapi get-call returned non-JSON") from exc
+        return data if isinstance(data, dict) else None
 
     def _resolve_phone_number_id(self) -> str:
         """Return the phone-number ID. If configured value looks like a phone
@@ -43,9 +73,12 @@ class VapiClient:
             resp = httpx.get(f"{self.cfg.vapi_base_url}/phone-number",
                              headers=headers, timeout=15.0)
             if resp.status_code < 300:
-                for pn in resp.json():
+                numbers = resp.json()
+                for pn in numbers if isinstance(numbers, list) else []:
+                    if not isinstance(pn, dict):
+                        continue
                     num = "".join(ch for ch in str(pn.get("number", "")) if ch.isdigit())
-                    if num and num == want:
+                    if num and num == want and pn.get("id"):
                         return pn["id"]
         except (httpx.HTTPError, ValueError, KeyError):
             pass
@@ -60,6 +93,9 @@ class VapiClient:
         """
         if self.mock:
             return self._mock_create(customer_number, variable_values)
+        if not self.cfg.configured:
+            raise VapiError("Vapi is not configured (API key, assistant id and "
+                            "phone number id are all required). No call placed.")
 
         payload = {
             "assistantId": self.cfg.vapi_assistant_id,        # existing assistant
