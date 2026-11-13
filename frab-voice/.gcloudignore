@@ -1,0 +1,8 @@
+# don't upload local state / caches / tests to the build
+voice_store.json
+test_voice_store.json
+**/__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+.env
