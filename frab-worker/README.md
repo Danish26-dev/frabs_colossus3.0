@@ -1,9 +1,10 @@
-# FRAB Confidential Investigation Worker
+# FRAB Investigation Worker
 
-The confidential investigation worker for FRAB (Financial Risk Analysis &
-Behavioral Investigation). This is the component that runs inside the TEE:
-it receives a bank-generated alert, investigates it against banking context,
-and returns an evidence-linked recommendation for a human analyst.
+The investigation worker for FRAB (Financial Risk Analysis & Behavioral
+Investigation). It receives a bank-generated alert, investigates it against
+banking context, and returns an evidence-linked recommendation for a human
+analyst. Model inference runs on 0G Private Computer under Private trust mode
+(TEE-backed providers only); the worker itself runs on Cloud Run.
 
 ## Governing rule
 
@@ -11,7 +12,7 @@ and returns an evidence-linked recommendation for a human analyst.
 > investigation must be traceable to either deterministic computation or a
 > specific evidence ID. The LLM is never the source of truth.
 
-Phase 0 (this stage) implements the deterministic foundation with **no AI**:
+The deterministic foundation (no AI involved):
 
 - `data_access/` — clean loaders over the synthetic-bank CSVs
 - `features/`     — deterministic 0–1 risk features
@@ -72,6 +73,3 @@ with `X-0G-Provider-Trust-Mode: private`. It ships in **mock mode**
 (`LLM_MOCK_MODE=true`, the default): a scripted client that makes no network
 calls and spends no credits. See `.env.example` for every setting. Real
 inference needs `ZG_API_KEY` and `ZG_MODEL` and `LLM_MOCK_MODE=false`.
-
-The old self-hosted path (`FRAB_LLM=vllm` with `FRAB_VLLM_URL` /
-`FRAB_GEMMA_MODEL`) still works but is not required.
