@@ -28,6 +28,7 @@ a bounded repair/retry loop so a malformed model response never propagates.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import os
@@ -375,6 +376,11 @@ class ZeroGClient:
             raise self._failure(LLMProviderError(
                 "Could not reach the 0G Router (network error).",
                 code="network_error")) from None
+        except http.client.HTTPException:
+            # e.g. IncompleteRead: the connection broke mid-response
+            raise self._failure(LLMProviderError(
+                "The 0G response was cut off (connection broke mid-response).",
+                code="network_error")) from None
 
         return self._parse_success(raw, header_request_id)
 
@@ -411,11 +417,19 @@ class ZeroGClient:
     def _record_usage(self, body: dict[str, Any], request_id: Any) -> None:
         raw_usage = body.get("usage")
         usage: dict[str, Any] = raw_usage if isinstance(raw_usage, dict) else {}
-        pt = int(usage.get("prompt_tokens") or 0)
-        ct = int(usage.get("completion_tokens") or 0)
-        tt = int(usage.get("total_tokens") or (pt + ct))
 
-        reasoning_tokens = int(usage.get("reasoning_tokens") or 0)
+        def _int(v: Any) -> int:
+            # usage is metadata: an odd value must never discard a paid answer
+            try:
+                return int(v or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        pt = _int(usage.get("prompt_tokens"))
+        ct = _int(usage.get("completion_tokens"))
+        tt = _int(usage.get("total_tokens")) or (pt + ct)
+
+        reasoning_tokens = _int(usage.get("reasoning_tokens"))
         cost = usage.get("cost", body.get("cost"))
         is_estimate = False
         if not isinstance(cost, (int, float)) or isinstance(cost, bool):
@@ -510,8 +524,7 @@ class ZeroGClient:
             mapped = LLMProviderError(
                 "0G rejected the trust-mode header.",
                 code=code, http_status=status, request_id=request_id)
-        elif status in (400, 404) and (
-                "model" in code or "model" in detail.lower() or status == 404):
+        elif status in (400, 404) and ("model" in code or "model" in detail.lower()):
             mapped = LLMModelUnavailable(
                 f"Model '{self.model}' is not available to this account under "
                 f"Private trust mode. Check ZG_MODEL. ({detail or code or status})",
