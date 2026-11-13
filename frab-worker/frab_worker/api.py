@@ -43,7 +43,7 @@ from .api_models import (
     StatusResponse,
 )
 from .config import default_config
-from .data_access import default_bank_data
+from .data_access import bank_for_alert, default_bank_data
 from .llm import get_client, llm_mode_name
 from .persistence import persistence_from_env
 from .store import InvestigationStore
@@ -77,6 +77,11 @@ app.add_middleware(
 # cannot start, the worker fails at startup rather than silently losing results.
 _store = InvestigationStore(persistence=persistence_from_env())
 
+# Production (durable store) fails CLOSED: never run the investigation API open.
+if os.environ.get("FRAB_STORE", "").strip().lower() == "firestore" \
+        and not os.environ.get("FRAB_API_TOKEN", "").strip():
+    raise RuntimeError("Refusing to start in production without FRAB_API_TOKEN.")
+
 
 def require_api_token(request: Request) -> None:
     """Optional shared-token auth for the investigation endpoints.
@@ -109,18 +114,30 @@ def _error(code: str, message: str, case_id: str = "", http_status: int = 400) -
           dependencies=[Depends(require_api_token)])
 def start_investigation(req: InvestigationRequest):
     trigger_id = req.alert.transaction_id
-    bank = default_bank_data()
 
-    # In API mode, prime the investigation bundle for this alert so the trigger
-    # lookup below (and the whole investigation) can resolve. No-op for CSV.
-    if req.alert_id and hasattr(bank, "load_alert"):
-        try:
-            bank.load_alert(req.alert_id)
-        except Exception:  # noqa: BLE001
-            pass
+    # idempotent: a known case_id reports its real state and is not re-run
+    existing = _store.get(req.case_id)
+    if existing is not None:
+        return StartResponse(case_id=req.case_id, status=existing.status)
+
+    # this case's OWN data access (API mode: the alert's bundle, fetched now),
+    # so concurrent cases never read each other's data
+    try:
+        bank = bank_for_alert(req.alert_id)
+    except Exception as exc:  # noqa: BLE001
+        return _error(ErrorCode.DATA_SOURCE_UNAVAILABLE,
+                      f"Bank data unavailable for alert '{req.alert_id}': {exc}",
+                      case_id=req.case_id, http_status=503)
+    if req.alert_id and getattr(bank, "_fetched", False) and not getattr(bank, "_bundle", None):
+        return _error(ErrorCode.INVALID_REQUEST, f"Alert '{req.alert_id}' not found.",
+                      case_id=req.case_id, http_status=422)
 
     # validate the trigger exists before kicking off a background run
-    txn = bank.get_transaction(trigger_id)
+    try:
+        txn = bank.get_transaction(trigger_id)
+    except Exception as exc:  # noqa: BLE001
+        return _error(ErrorCode.DATA_SOURCE_UNAVAILABLE, f"Bank data unavailable: {exc}",
+                      case_id=req.case_id, http_status=503)
     if txn is None:
         return _error(
             ErrorCode.DATA_SOURCE_UNAVAILABLE,
@@ -140,9 +157,9 @@ def start_investigation(req: InvestigationRequest):
             case_id=req.case_id, http_status=422,
         )
 
-    _store.start(req.case_id, trigger_id, prior_alert_count=req.prior_alert_count,
-                 alert_id=req.alert_id, alert_type=req.alert.type)
-    return StartResponse(case_id=req.case_id, status="STARTED")
+    state = _store.start(req.case_id, trigger_id, prior_alert_count=req.prior_alert_count,
+                         alert_id=req.alert_id, alert_type=req.alert.type, bank=bank)
+    return StartResponse(case_id=req.case_id, status=state.status)
 
 
 @app.get("/investigate/{case_id}/status", response_model=StatusResponse,
@@ -185,6 +202,7 @@ def stream_events(case_id: str):
         # initial comment so the browser opens the stream immediately
         yield ": stream open\n\n"
         sent = 0
+        idle = 0.0
         while True:
             new = state.wait_for_new(sent, timeout=1.0)
             for ev in new:
@@ -192,6 +210,11 @@ def stream_events(case_id: str):
             sent += len(new)
             if state.done and sent >= len(state.events):
                 break
+            # keepalive during long model calls, so proxies don't drop the stream
+            idle = 0.0 if new else idle + 1.0
+            if idle >= 15.0:
+                idle = 0.0
+                yield ": keepalive\n\n"
         # explicit terminal marker for the client to close cleanly
         yield "event: STREAM_END\ndata: {}\n\n"
 

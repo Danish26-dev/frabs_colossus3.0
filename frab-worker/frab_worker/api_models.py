@@ -25,7 +25,10 @@ class InvestigationScope(BaseModel):
 
 
 class InvestigationRequest(BaseModel):
-    case_id: str = Field(..., description="Caller-assigned case id")
+    # letters, digits and _ . : - only (no "/", not "." or ".."): it is used as a
+    # URL path segment and a Firestore document id
+    case_id: str = Field(..., description="Caller-assigned case id",
+                         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
     alert_id: str = Field("", description="Alert id from the bank")
     alert: AlertInfo
     customer_id: str = Field("", description="Optional; derived from the transaction if omitted")
