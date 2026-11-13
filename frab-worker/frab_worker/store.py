@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .persistence import CasePersistence, build_record
-from .supervisor import Supervisor
+from .supervisor import Supervisor, failed_result
 
 logger = logging.getLogger("frab_worker.store")
 
@@ -50,8 +50,14 @@ class CaseState:
             self.current_event = ev.get("event", "")
             if ev.get("agent"):
                 self.current_agent = ev["agent"]
-            if ev.get("event") == "RUNNING":
+            # the event's *status* says whether work is under way (event names
+            # are things like WATCHMAN_ANALYZING); never regress a final status
+            if self.status == "STARTED" and ev.get("status") == "RUNNING":
                 self.status = "RUNNING"
+            agent = ev.get("agent")
+            if (ev.get("status") == "COMPLETED" and str(ev.get("event", "")).endswith("_COMPLETED")
+                    and agent and agent not in self.completed_stages):
+                self.completed_stages.append(agent)
             self._cond.notify_all()
 
     def wait_for_new(self, from_index: int, timeout: float = 1.0) -> list[dict[str, Any]]:
@@ -64,8 +70,9 @@ class CaseState:
 class InvestigationStore:
     def __init__(self, supervisor_factory=None,
                  persistence: CasePersistence | None = None) -> None:
-        # supervisor_factory lets tests inject a Supervisor with a specific bank
-        self._factory = supervisor_factory or (lambda sink: Supervisor(event_sink=sink))
+        # supervisor_factory lets tests inject a Supervisor with a specific bank;
+        # by default each case gets its own Supervisor bound to its own data
+        self._custom_factory = supervisor_factory
         self._persistence = persistence
         self._cases: dict[str, CaseState] = {}
         self._lock = threading.Lock()
@@ -123,6 +130,10 @@ class InvestigationStore:
                 "case_id": case_id, "event": "INVESTIGATION_FAILED",
                 "agent": "SUPERVISOR", "status": "FAILED", "timestamp": time.time(),
                 "metadata": {"error": state.error}})
+        if state.status == "FAILED" and state.result is None:
+            # /result must answer a finished case, never "not ready" forever
+            state.result = failed_result(case_id, state.error or "unknown error",
+                                         state.events).to_dict()
         return state
 
     # --- public API --------------------------------------------------------
@@ -138,9 +149,16 @@ class InvestigationStore:
         with self._lock:
             return self._cases.setdefault(case_id, restored)
 
+    def _make_supervisor(self, sink, bank):
+        if self._custom_factory is not None:
+            return self._custom_factory(sink)
+        return Supervisor(bank=bank, event_sink=sink)
+
     def start(self, case_id: str, trigger_transaction_id: str,
               *, prior_alert_count: int = 0, alert_id: str = "",
-              alert_type: str = "") -> CaseState:
+              alert_type: str = "", bank=None) -> CaseState:
+        """Start a case, or return the existing one (its real status) if the
+        case_id is already known. `bank` is this case's own data access."""
         existing = self.get(case_id)
         if existing is not None:
             return existing
@@ -155,7 +173,7 @@ class InvestigationStore:
             try:
                 # built inside the guard: a misconfigured LLM (e.g. a missing
                 # ZG_API_KEY) must fail this case visibly, not hang the stream
-                supervisor = self._factory(state.append_event)
+                supervisor = self._make_supervisor(state.append_event, bank)
                 result = supervisor.investigate(
                     case_id, trigger_transaction_id,
                     prior_alert_count=prior_alert_count, alert_id=alert_id,
@@ -171,6 +189,10 @@ class InvestigationStore:
                     "agent": "SUPERVISOR", "status": "FAILED",
                     "timestamp": time.time(), "metadata": {"error": str(exc)},
                 })
+                with state._cond:
+                    trace = list(state.events)
+                state.result = failed_result(case_id, str(exc), trace,
+                                             state.completed_stages).to_dict()
                 state.status = "FAILED"
             finally:
                 # result and status are final BEFORE the case is marked done
