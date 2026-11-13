@@ -19,7 +19,7 @@ let current: ActiveCase | null = null;
 let hydrated = false;
 const listeners = new Set<() => void>();
 
-// The active case is in-memory only. The confidential workspace is open only
+// The active case is in-memory only. The investigation workspace is open only
 // while you are actively working a case, so a full page load / new session
 // starts with NO active case (the workspace stays locked until you launch an
 // investigation from Alert Intelligence). Any stale entries persisted by

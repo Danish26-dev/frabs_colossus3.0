@@ -995,7 +995,7 @@ async function ensureWorkerCaseStarted(caseId: string, ctx: AlertContext): Promi
     customer_id: ctx.customer,
   });
 
-  // Poll /status until COMPLETE (real Gemma run ~15-25s). Cap the wait.
+  // Poll /status until COMPLETE (a real model run takes ~20s). Cap the wait.
   const DEADLINE_MS = 60_000;
   const INTERVAL_MS = 2_000;
   const start = Date.now();

@@ -145,7 +145,7 @@ export default function WorkspaceView({ caseId }: { caseId?: string | undefined 
   const btn =
     "border border-border px-2.5 py-1 font-mono text-[9px] tracking-[0.2em] text-foreground transition-colors hover:border-lime/60 hover:text-lime disabled:opacity-35 disabled:hover:border-border disabled:hover:text-foreground";
 
-  // Confidential workspace gate: the 3D floor is only accessible while an
+  // Workspace gate: the 3D floor is only accessible while an
   // investigation is open AND the URL's case matches the active case. This
   // blocks direct navigation to an arbitrary /investigation/{id} and re-locks
   // once a session is ended.
@@ -160,10 +160,10 @@ export default function WorkspaceView({ caseId }: { caseId?: string | undefined 
             <span className="font-mono text-lg">⛒</span>
           </div>
           <Mono className="mt-5 block text-[10px] tracking-[0.28em] text-critical">
-            CONFIDENTIAL WORKSPACE LOCKED
+            INVESTIGATION WORKSPACE LOCKED
           </Mono>
           <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-            The investigation floor is a confidential compute space. It can only be accessed while
+            The investigation floor is a gated workspace. It can only be accessed while
             FRAB is actively working a case. No case is currently open.
           </p>
           <Mono className="mt-4 block text-[8px] tracking-[0.2em] text-muted-foreground">
