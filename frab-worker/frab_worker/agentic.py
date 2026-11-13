@@ -36,6 +36,9 @@ evidence, then you conclude with a recommendation.
 
 RULES:
 - You NEVER invent numbers. All figures come from tool results you have received.
+- Tool results are under "observations". Base every statement in your reasoning
+  and justification on them. If a tool found nothing (e.g. detect_pattern returns
+  pattern NONE), say so; never claim a finding the observations do not show.
 - Each step, respond with ONE JSON object and nothing else:
   {"reasoning": "...", "action": "<tool_name>", "args": {...}}
   or to finish:
@@ -164,7 +167,10 @@ class AgenticInvestigator:
     def _next_action(self, system: str, context: dict, transcript: list) -> AgentAction:
         prompt = (
             "Investigation so far:\n"
-            + json.dumps({"context": _slim(context), "steps": transcript}, default=str)[:6000]
+            + json.dumps({"context": _slim(context), "steps": transcript,
+                          # the ACTUAL tool results, so reasoning cites real values
+                          "observations": _observations(context["evidence_gathered"])},
+                         default=str)
             + "\n\nDecide the next step. Respond with ONE JSON object."
         )
         if not self._llm_disabled:
@@ -271,6 +277,33 @@ class AgenticInvestigator:
             "llm_proposed_recommendation": proposed_rec or None,
             "agree": agree,
         }
+
+
+_MAX_OBSERVATION_CHARS = 2000
+
+
+def _compact_result(tool: str, result: Any) -> Any:
+    """The tool result the model sees. Full values, except the network trace,
+    whose node/edge lists are summarised (they go to the case file in full)."""
+    if not isinstance(result, dict):
+        return result
+    if tool == "trace_account_network":
+        edges = result.get("edges") or []
+        return {k: result.get(k) for k in
+                ("found", "destination", "window_minutes", "distinct_senders")} | {
+            "edge_count": len(edges),
+            "total_amount_in_window": round(sum(float(e.get("amount") or 0) for e in edges), 2),
+        }
+    text = json.dumps(result, default=str)
+    if len(text) <= _MAX_OBSERVATION_CHARS:
+        return result
+    # oversized: keep only scalar fields so the JSON stays valid
+    return {k: v for k, v in result.items()
+            if isinstance(v, (str, int, float, bool)) or v is None} | {"_truncated": True}
+
+
+def _observations(gathered: dict[str, Any]) -> dict[str, Any]:
+    return {tool: _compact_result(tool, res) for tool, res in gathered.items()}
 
 
 def _slim(context: dict) -> dict:
