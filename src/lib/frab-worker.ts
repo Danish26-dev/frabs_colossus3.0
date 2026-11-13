@@ -231,7 +231,17 @@ export async function startWorkerInvestigation(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(req),
   });
-  if (!res.ok) throw new Error(`worker /investigate failed (${res.status})`);
+  if (!res.ok) {
+    // The worker answers 422 INVALID_REQUEST / 503 DATA_SOURCE_UNAVAILABLE with { error: { code, message } }.
+    let detail = "";
+    try {
+      const body = (await res.json()) as { error?: { code?: string; message?: string } };
+      if (body?.error?.message) detail = `: ${body.error.code ?? "ERROR"} - ${body.error.message}`;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(`worker /investigate failed (${res.status})${detail}`);
+  }
   return (await res.json()) as WorkerStartResponse;
 }
 
