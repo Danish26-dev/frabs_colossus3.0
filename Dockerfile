@@ -12,13 +12,17 @@ WORKDIR /app
 
 # Build-time public config (safe to bake — these are public URLs, not secrets).
 ARG VITE_FRAB_API_URL=https://frab-git-379796489354.asia-south1.run.app
-ARG VITE_FRAB_WORKER_URL=https://beautiful-interaction-reg-listings.trycloudflare.com
-ARG VITE_FRAB_VOICE_URL=https://frab-voice-200002205070.asia-south1.run.app
-ARG VITE_FRAB_VOICE_TEST_PHONE=
+ARG VITE_FRAB_WORKER_URL=https://frab-worker-379796489354.asia-south1.run.app
+ARG VITE_FRAB_VOICE_URL=https://frab-voice-379796489354.asia-south1.run.app
+# Shared tokens for the worker and voice services. Pass them with --build-arg; there is no default.
+# They are compiled into the browser bundle, so they deter casual abuse but are NOT secrets.
+ARG VITE_FRAB_WORKER_TOKEN=
+ARG VITE_FRAB_VOICE_TOKEN=
 ENV VITE_FRAB_API_URL=$VITE_FRAB_API_URL \
     VITE_FRAB_WORKER_URL=$VITE_FRAB_WORKER_URL \
     VITE_FRAB_VOICE_URL=$VITE_FRAB_VOICE_URL \
-    VITE_FRAB_VOICE_TEST_PHONE=$VITE_FRAB_VOICE_TEST_PHONE \
+    VITE_FRAB_WORKER_TOKEN=$VITE_FRAB_WORKER_TOKEN \
+    VITE_FRAB_VOICE_TOKEN=$VITE_FRAB_VOICE_TOKEN \
     NITRO_PRESET=node-server
 
 # Install dependencies. Using `npm install` (not `npm ci`) because the committed

@@ -15,9 +15,11 @@ substitutions:
   _REPO: frab
   _TAG: latest
   _API_URL: https://frab-git-379796489354.asia-south1.run.app
-  _WORKER_URL: https://beautiful-interaction-reg-listings.trycloudflare.com
-  _VOICE_URL: https://frab-voice-200002205070.asia-south1.run.app
-  _VOICE_TEST_PHONE: ""
+  _WORKER_URL: https://frab-worker-379796489354.asia-south1.run.app
+  _VOICE_URL: https://frab-voice-379796489354.asia-south1.run.app
+  # Shared tokens (no defaults). Pass at submit time, never commit them.
+  _WORKER_TOKEN: ""
+  _VOICE_TOKEN: ""
 
 images:
   - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}"
@@ -34,7 +36,9 @@ steps:
       - "--build-arg"
       - "VITE_FRAB_VOICE_URL=${_VOICE_URL}"
       - "--build-arg"
-      - "VITE_FRAB_VOICE_TEST_PHONE=${_VOICE_TEST_PHONE}"
+      - "VITE_FRAB_WORKER_TOKEN=${_WORKER_TOKEN}"
+      - "--build-arg"
+      - "VITE_FRAB_VOICE_TOKEN=${_VOICE_TOKEN}"
       - "-t"
       - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}"
       - "."
