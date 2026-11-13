@@ -33,6 +33,19 @@ export const VOICE_BASE_URL: string | undefined =
 export const IS_VOICE_LIVE = Boolean(VOICE_BASE_URL);
 
 /**
+ * Shared token for the voice service (sent as `Authorization: Bearer`). The service rejects
+ * voice-escalation and voice-status requests without it (401); /health stays open.
+ * NOTE: a VITE_* value is compiled into the browser bundle, so this token deters casual abuse
+ * but is not a secret. Anyone who opens the site can read it.
+ */
+export const VOICE_TOKEN: string | undefined =
+  (import.meta.env["VITE_FRAB_VOICE_TOKEN"] as string | undefined) || undefined;
+
+function voiceHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return VOICE_TOKEN ? { ...extra, authorization: `Bearer ${VOICE_TOKEN}` } : extra;
+}
+
+/**
  * Optional demo phone override. The voice service normally resolves the
  * customer phone itself, but the synthetic customers have no numbers in its
  * directory yet — so for the demo we can supply a test number here and the
@@ -132,10 +145,11 @@ export async function startVoiceEscalation(
     `${VOICE_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/voice-escalation`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: voiceHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(body),
     },
   );
+  if (res.status === 401) throw new Error("voice escalation rejected: missing or wrong token (401)");
   if (!res.ok) throw new Error(`voice escalation failed (${res.status})`);
   return (await res.json()) as VoiceStartResponse;
 }
@@ -143,7 +157,10 @@ export async function startVoiceEscalation(
 /** Fetch the current voice state for a case (poll target). */
 export async function fetchVoiceState(caseId: string): Promise<VoiceState> {
   if (!VOICE_BASE_URL) throw new Error("No voice service configured (VITE_FRAB_VOICE_URL unset)");
-  const res = await fetch(`${VOICE_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/voice`);
+  const res = await fetch(`${VOICE_BASE_URL}/api/cases/${encodeURIComponent(caseId)}/voice`, {
+    headers: voiceHeaders(),
+  });
+  if (res.status === 401) throw new Error("voice status rejected: missing or wrong token (401)");
   if (!res.ok) throw new Error(`voice state failed (${res.status})`);
   return (await res.json()) as VoiceState;
 }
