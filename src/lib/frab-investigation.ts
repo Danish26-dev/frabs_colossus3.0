@@ -133,16 +133,8 @@ export const DEMO_CONFIDENTIAL: ConfidentialState = {
   tee: "NOT CONNECTED",
   attestation: "NOT CONNECTED",
   channel: "NOT CONNECTED",
-  model: "GEMMA (NOT CONNECTED)",
+  model: "NOT CONNECTED",
   inference: "NOT CONNECTED",
-};
-
-export const READY_CONFIDENTIAL: ConfidentialState = {
-  tee: "READY",
-  attestation: "READY",
-  channel: "READY",
-  model: "GEMMA",
-  inference: "READY",
 };
 
 export function emptyRuntime(): Record<AgentId, AgentRuntime> {

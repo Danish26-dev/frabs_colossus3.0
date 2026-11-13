@@ -10,7 +10,6 @@ import {
   fetchInvestigationCase,
   fetchInvestigationEvents,
   INVESTIGATION_MODE,
-  READY_CONFIDENTIAL,
   type AgentId,
   type AgentRuntime,
   type AgentState,
@@ -21,7 +20,13 @@ import {
   type RunStatus,
   type ScriptStep,
 } from "../lib/frab-investigation";
-import { IS_WORKER_LIVE, subscribeToInvestigation, type WorkerEvent } from "../lib/frab-worker";
+import {
+  IS_WORKER_LIVE,
+  fetchWorkerHealth,
+  subscribeToInvestigation,
+  type WorkerEvent,
+} from "../lib/frab-worker";
+import { liveConfidential, normalizeLlmMode, type LlmMode } from "../lib/frab-inference";
 
 export interface RunSnapshot {
   mode: "live" | "demo";
@@ -61,6 +66,9 @@ export function useInvestigationRun(caseId = DEMO_CASE.id) {
   const [events, setEvents] = useState<InvestigationEvent[]>([]);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [elapsedMs, setElapsed] = useState(0);
+  // Real inference state: what the worker reports on /health, plus any LLM_ERROR seen this run.
+  const [llmMode, setLlmMode] = useState<LlmMode>(IS_WORKER_LIVE ? "checking" : "unset");
+  const [llmErrorCode, setLlmErrorCode] = useState<string | null>(null);
 
   const cursor = useRef(0);
   const lastTick = useRef<number | null>(null);
@@ -154,6 +162,12 @@ export function useInvestigationRun(caseId = DEMO_CASE.id) {
 
     setEvents((prev) => [...prev, { ts, code, agent }]);
 
+    // The inference provider failed. The case continues from the deterministic tools, so this
+    // is surfaced (code shown in the private-inference panel) but does not stop the run.
+    if (code === "LLM_ERROR") {
+      setLlmErrorCode(typeof meta["code"] === "string" ? (meta["code"] as string) : "UNKNOWN");
+    }
+
     if (code === "INVESTIGATION_COMPLETE") setStatus("COMPLETE");
     if (code === "FAILED" || code === "PARTIAL") setStatus("COMPLETE");
     if (!agent) return;
@@ -209,6 +223,18 @@ export function useInvestigationRun(caseId = DEMO_CASE.id) {
       }
     }
   }, []);
+
+  /* ---- live: which inference mode is the worker in? (open /health, no token) ---- */
+  useEffect(() => {
+    if (!live || !IS_WORKER_LIVE) return;
+    const ctl = new AbortController();
+    fetchWorkerHealth(ctl.signal)
+      .then((h) => setLlmMode(normalizeLlmMode(h.llm_mode)))
+      .catch(() => {
+        if (!ctl.signal.aborted) setLlmMode("down");
+      });
+    return () => ctl.abort();
+  }, [live]);
 
   /* ---- demo engine ---- */
   useEffect(() => {
@@ -304,6 +330,7 @@ export function useInvestigationRun(caseId = DEMO_CASE.id) {
     setEvents([]);
     setEvidence([]);
     setElapsed(0);
+    setLlmErrorCode(null);
   }, []);
 
   const activeAgent = useMemo(() => {
@@ -319,12 +346,7 @@ export function useInvestigationRun(caseId = DEMO_CASE.id) {
     mode: live ? "live" : "demo",
     status,
     investigationCase,
-    confidential:
-      live && status !== "DORMANT"
-        ? READY_CONFIDENTIAL
-        : live
-          ? READY_CONFIDENTIAL
-          : DEMO_CONFIDENTIAL,
+    confidential: live ? liveConfidential(llmMode, llmErrorCode) : DEMO_CONFIDENTIAL,
     agents,
     events,
     evidence,

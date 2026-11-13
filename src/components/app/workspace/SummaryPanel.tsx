@@ -158,17 +158,28 @@ export default function SummaryPanel({
           <div ref={endRef} />
         </Section>
 
-        <Section title="CONFIDENTIAL COMPUTE">
+        <Section title="PRIVATE INFERENCE">
           {(
             [
-              ["TEE", confidential.tee],
+              ["ENCLAVE", confidential.tee],
               ["ATTESTATION", confidential.attestation],
               ["CHANNEL", confidential.channel],
               ["MODEL", confidential.model],
               ["INFERENCE", confidential.inference],
             ] as const
           ).map(([k, v]) => (
-            <Line key={k} k={k} v={v} tone={v === "NOT CONNECTED" ? "mute" : "lime"} />
+            <Line
+              key={k}
+              k={k}
+              v={v}
+              tone={
+                /ERROR|MOCK|NONE/.test(v)
+                  ? "warn"
+                  : /NOT |OFFLINE|CHECKING/.test(v)
+                    ? "mute"
+                    : "lime"
+              }
+            />
           ))}
         </Section>
       </div>
