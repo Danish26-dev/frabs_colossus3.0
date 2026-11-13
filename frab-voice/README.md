@@ -6,7 +6,7 @@ assistant. The structured result flows back into the same case + audit trail.
 
 ## What this is (and is NOT)
 
-FRAB is a monolithic investigation application (the CVM worker + agents + Gemma).
+FRAB is an investigation application (the investigation worker and its agents).
 This service is **only** the Vapi adapter around it:
 
 ```
@@ -16,7 +16,7 @@ FRAB case  →  human analyst decides.
 ```
 
 It does **NOT**: run any FRAB agents, compute risk scores, detect fraud, make
-final compliance decisions, create a new Vapi assistant, or touch the CVM worker.
+final compliance decisions, create a new Vapi assistant, or touch the investigation worker.
 It is a thin telephony adapter.
 
 ## Responsibilities
