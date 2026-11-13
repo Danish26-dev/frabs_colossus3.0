@@ -1,123 +1,128 @@
 # FRAB Frontend — Deploy to GCP Cloud Run
 
-The frontend is a TanStack Start SSR app. The production build (nitro
-`node-server` preset) emits a self-contained Node server at
-`.output/server/index.mjs` that listens on `$PORT` — exactly what Cloud Run
-needs. The `Dockerfile` builds and runs it.
+The frontend is a TanStack Start SSR app. The production build (Nitro `node-server`
+preset) emits a self-contained Node server at `.output/server/index.mjs` that listens
+on `$PORT`, which is what Cloud Run needs. The `Dockerfile` builds and runs it.
 
-## ⚠️ The one thing that trips everyone up: VITE_* is BUILD-TIME
+The three backends are separate Cloud Run services, deployed on their own:
 
-The three backend URLs are read by Vite and **baked into the browser bundle at
-build time**, not read at runtime. So they must be passed as Docker
-`--build-arg` (they already have the current live values as defaults in the
-`Dockerfile` and `cloudbuild.yaml`). Setting them as Cloud Run *runtime* env
-vars does nothing for the client.
-
-| Variable | Purpose | Current value (default) |
+| Service | Purpose | URL |
 |---|---|---|
-| `VITE_FRAB_API_URL` | Synthetic bank API | `https://frab-git-379796489354.asia-south1.run.app` |
-| `VITE_FRAB_WORKER_URL` | Investigation worker (Gemma VM, HTTPS tunnel) | `https://beautiful-interaction-reg-listings.trycloudflare.com` |
-| `VITE_FRAB_VOICE_URL` | Voice escalation service | `https://frab-voice-200002205070.asia-south1.run.app` |
-| `VITE_FRAB_VOICE_TEST_PHONE` | Optional demo phone override | *(empty)* |
+| Bank API | Synthetic bank: alerts, cases, transactions | `https://frab-git-379796489354.asia-south1.run.app` |
+| Investigation worker | Agents + 0G model inference, SSE stream | `https://frab-worker-379796489354.asia-south1.run.app` |
+| Voice service | Vapi voice escalation | `https://frab-voice-379796489354.asia-south1.run.app` |
 
-> Note: the worker is fronted by an HTTPS tunnel so it works from the HTTPS
-> frontend (no mixed-content blocking). The tunnel URL is **temporary** — if the
-> tunnel or VM restarts it changes, and the frontend must be rebuilt with the
-> new `_WORKER_URL`. All three services (bank, worker, voice) are HTTPS.
+## The one thing that trips everyone up: `VITE_*` is build-time
+
+Vite reads `VITE_*` values **when the app is built** and compiles them into the browser
+bundle. Setting them as Cloud Run runtime env vars does nothing for the client. They are
+passed as Docker `--build-arg` (the URLs have defaults in the `Dockerfile` and
+`cloudbuild.yaml`). Changing a URL or token means rebuilding and redeploying.
+
+| Variable | Purpose |
+|---|---|
+| `VITE_FRAB_API_URL` | Bank API base URL |
+| `VITE_FRAB_WORKER_URL` | Investigation worker base URL (HTTPS) |
+| `VITE_FRAB_WORKER_TOKEN` | Shared token for `/investigate*` (sent as `?token=`) |
+| `VITE_FRAB_VOICE_URL` | Voice service base URL |
+| `VITE_FRAB_VOICE_TOKEN` | Shared token for voice endpoints (sent as `Authorization: Bearer`) |
+
+> **The tokens are not secrets once built.** Anything compiled into a browser bundle can be
+> read by anyone who opens the site. The tokens deter casual abuse and keep the services
+> from being open to the world; they are not user authentication. Never commit them. Pass
+> them at build time only.
 
 ---
 
-## Prerequisites (one time)
+## Deploy from Cloud Shell
+
+### 0. One-time setup
 
 ```sh
-gcloud auth login
-gcloud config set project <YOUR_PROJECT_ID>
+# the project that hosts the frontend (keeps the existing CORS-allowed URL working)
+export PROJECT_ID=frab-507310
+gcloud config set project $PROJECT_ID
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
 
-# Artifact Registry repo to hold the image (once)
-gcloud artifacts repositories create frab \
-  --repository-format=docker \
-  --location=asia-south1
+# Artifact Registry repo to hold the image (only the first time)
+gcloud artifacts repositories create frab --repository-format=docker --location=asia-south1
+```
+
+### 1. Clone the repo
+
+```sh
+git clone https://github.com/Danish26-dev/frabs_colossus3.0.git
+cd frabs_colossus3.0
+```
+
+### 2. Read the two tokens (from the project where the worker and voice services live)
+
+```sh
+export WORKER_TOKEN="$(gcloud secrets versions access latest --secret FRAB_API_TOKEN --project frabs-514608)"
+export VOICE_TOKEN="$(gcloud secrets versions access latest --secret VOICE_API_TOKEN --project frabs-514608)"
+```
+
+### 3. Build, push and deploy with Cloud Build
+
+```sh
+gcloud builds submit --config cloudbuild.yaml --project $PROJECT_ID \
+  --substitutions=_WORKER_TOKEN="$WORKER_TOKEN",_VOICE_TOKEN="$VOICE_TOKEN"
+```
+
+Override a URL if one changes:
+
+```sh
+gcloud builds submit --config cloudbuild.yaml --project $PROJECT_ID \
+  --substitutions=_WORKER_URL=https://NEW-WORKER-URL,_WORKER_TOKEN="$WORKER_TOKEN",_VOICE_TOKEN="$VOICE_TOKEN"
+```
+
+### 4. Get the URL and check it
+
+```sh
+gcloud run services describe frab-frontend --region asia-south1 --format='value(status.url)'
+curl -s -o /dev/null -w "%{http_code}\n" "$(gcloud run services describe frab-frontend --region asia-south1 --format='value(status.url)')/overview"   # expect 200
 ```
 
 ---
 
-## Option A — one command via Cloud Build (recommended)
+## After deploying: CORS must allow the deployed origin
 
-Builds in the cloud, pushes, and deploys. Uses `cloudbuild.yaml`.
-
-```sh
-gcloud builds submit --config cloudbuild.yaml
-```
-
-Override a backend URL if it changes (e.g. new voice URL):
+The browser calls the bank, worker and voice services from the deployed frontend's origin,
+not from `localhost:8080`. Each service must list that exact origin or the calls are
+blocked. Test each one (replace `<FRONTEND_ORIGIN>` with the URL printed above):
 
 ```sh
-gcloud builds submit --config cloudbuild.yaml \
-  --substitutions=_VOICE_URL=https://frab-voice-NEW.run.app
+for u in \
+  https://frab-git-379796489354.asia-south1.run.app/alerts \
+  https://frab-worker-379796489354.asia-south1.run.app/health \
+  https://frab-voice-379796489354.asia-south1.run.app/health ; do
+  echo "== $u"
+  curl -s -D - -o /dev/null -H "Origin: <FRONTEND_ORIGIN>" "$u" | grep -i -E "^HTTP|access-control-allow-origin"
+done
 ```
+
+Every line must show `access-control-allow-origin` equal to your frontend origin. If one
+doesn't, ask that service's owner to add the origin.
 
 ---
 
-## Option B — build locally, then deploy
+## Build locally instead
 
 ```sh
-# 1. Build the image (bakes the public config into the bundle)
 docker build \
-  --build-arg VITE_FRAB_API_URL=https://frab-git-379796489354.asia-south1.run.app \
-  --build-arg VITE_FRAB_WORKER_URL=https://beautiful-interaction-reg-listings.trycloudflare.com \
-  --build-arg VITE_FRAB_VOICE_URL=https://frab-voice-200002205070.asia-south1.run.app \
-  -t asia-south1-docker.pkg.dev/<PROJECT_ID>/frab/frab-frontend:latest .
-
-# 2. Push
-docker push asia-south1-docker.pkg.dev/<PROJECT_ID>/frab/frab-frontend:latest
-
-# 3. Deploy
+  --build-arg VITE_FRAB_WORKER_TOKEN="$WORKER_TOKEN" \
+  --build-arg VITE_FRAB_VOICE_TOKEN="$VOICE_TOKEN" \
+  -t asia-south1-docker.pkg.dev/$PROJECT_ID/frab/frab-frontend:latest .
+docker push asia-south1-docker.pkg.dev/$PROJECT_ID/frab/frab-frontend:latest
 gcloud run deploy frab-frontend \
-  --image asia-south1-docker.pkg.dev/<PROJECT_ID>/frab/frab-frontend:latest \
-  --region asia-south1 \
-  --allow-unauthenticated \
-  --port 8080
+  --image asia-south1-docker.pkg.dev/$PROJECT_ID/frab/frab-frontend:latest \
+  --region asia-south1 --allow-unauthenticated --port 8080
 ```
-
----
-
-## Option C — source deploy (no Dockerfile handling by you)
-
-Cloud Run builds from source using the `Dockerfile` automatically. Note: build
-args aren't passed this way, so the `Dockerfile` defaults (current live URLs)
-are used. To change a URL, use Option A/B instead.
-
-```sh
-gcloud run deploy frab-frontend \
-  --source . \
-  --region asia-south1 \
-  --allow-unauthenticated \
-  --port 8080
-```
-
----
-
-## After deploy
-
-Cloud Run prints a URL like `https://frab-frontend-xxxxx.asia-south1.run.app`.
-
-**CORS reminder:** the browser now calls the bank / worker / voice services from
-this new Cloud Run origin, not `localhost:8080`. Add the deployed origin to each
-backend's CORS allowlist (bank, worker, voice) or those calls will be blocked.
-
-Verify:
-
-```sh
-curl -s https://<your-cloud-run-url>/overview -o /dev/null -w "%{http_code}\n"   # expect 200
-```
-
----
 
 ## Local sanity check before deploying
 
 ```sh
-# Build the node-server output and run it like Cloud Run would
-$env:NITRO_PRESET="node-server"; npm run build   # PowerShell
-npm run start                                     # serves on PORT (default 3000)
+# PowerShell
+$env:NITRO_PRESET = "node-server"; npm run build
+npm run start      # serves on PORT (default 3000)
 ```
