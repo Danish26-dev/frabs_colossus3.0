@@ -1,10 +1,85 @@
 import { useState } from "react";
-import type { GuardrailInfo, InvestigationResult } from "../../../../lib/frab-result";
+import type {
+  GuardrailInfo,
+  InvestigationResult,
+  LlmErrorInfo,
+  LlmInfo,
+} from "../../../../lib/frab-result";
 import { Mono } from "../../ui";
 
 const NA = "NOT AVAILABLE";
 
 const clean = (s: string | null) => (s ? s.replace(/_/g, " ") : NA);
+
+/**
+ * Which model produced the reasoning, what it used, and — when the provider failed — the
+ * error and request id to quote. A provider failure never blocks the case: the deterministic
+ * tools still produced the result.
+ */
+function InferencePanel({ llm, error }: { llm: LlmInfo | null; error: LlmErrorInfo | null }) {
+  if (!llm && !error) return null;
+  const fmt = (n: number | null) => (n === null ? "—" : n.toLocaleString("en-IN"));
+  return (
+    <div className="mt-4 space-y-3">
+      {error ? (
+        <div className="border-l-2 border-warning bg-surface px-4 py-3.5" role="alert">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Mono className="text-[9px] text-warning">MODEL PROVIDER ERROR</Mono>
+            <Mono className="border border-warning/50 px-2 py-0.5 text-[8px] text-warning">
+              {error.code ?? "UNKNOWN"}
+              {error.httpStatus ? ` · HTTP ${error.httpStatus}` : ""}
+            </Mono>
+          </div>
+          <p className="mt-2 text-[12px] leading-relaxed text-secondary-foreground">
+            The inference provider failed during this investigation. The case still completed from
+            the deterministic tools, so the numbers and the recommendation below are computed, but
+            the model's written reasoning may be missing or partial.
+          </p>
+          {error.message ? (
+            <p className="mt-2 break-words text-[11px] leading-relaxed text-technical">
+              <span className="text-muted-foreground">PROVIDER MESSAGE: </span>
+              {error.message}
+            </p>
+          ) : null}
+          {error.requestId ? (
+            <Mono className="mt-2 block break-all text-[9px] text-muted-foreground">
+              REQUEST ID · {error.requestId}
+            </Mono>
+          ) : null}
+        </div>
+      ) : null}
+      {llm ? (
+        <div className="border-l-2 border-border bg-surface px-4 py-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Mono className="text-[9px] text-lime">INFERENCE</Mono>
+            {llm.mock ? (
+              <Mono className="border border-warning/50 px-2 py-0.5 text-[8px] text-warning">
+                MOCK · NO MODEL CALLED
+              </Mono>
+            ) : null}
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-5">
+            {[
+              ["PROVIDER", llm.provider.toUpperCase()],
+              ["MODEL", llm.model ?? "—"],
+              ["MODEL CALLS", fmt(llm.calls)],
+              ["TOKENS", fmt(llm.totalTokens)],
+              [
+                llm.costIsEstimate ? "EST. COST" : "COST",
+                llm.costUsd === null ? "NOT REPORTED" : `$${llm.costUsd.toFixed(4)}`,
+              ],
+            ].map(([k, v]) => (
+              <div key={k}>
+                <Mono className="block text-[8px] text-muted-foreground">{k}</Mono>
+                <Mono className="mt-1 block break-all text-[10px] text-foreground">{v}</Mono>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * The evidence-grounding guardrail: shows what the LLM proposed, what the
@@ -195,6 +270,7 @@ export default function ReasoningChain({
         </div>
 
         {result.guardrail ? <GuardrailPanel guardrail={result.guardrail} /> : null}
+        <InferencePanel llm={result.llm ?? null} error={result.llmError ?? null} />
 
         {result.recommendation === "INSUFFICIENT_EVIDENCE" || result.status !== "COMPLETE" ? (
           <div className="mt-4 border-l-2 border-warning bg-warning/10 px-4 py-3">
