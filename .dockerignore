@@ -1,0 +1,17 @@
+node_modules
+.output
+.nitro
+.tanstack
+.wrangler
+dist
+dist-ssr
+.git
+.env
+.env.*
+!.env.example
+*.log
+npm-debug.log*
+.DS_Store
+.vscode
+.idea
+DEMO_SCRIPT.md
