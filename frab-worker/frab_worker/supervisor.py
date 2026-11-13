@@ -105,13 +105,17 @@ class Supervisor:
         # In API mode, prime the investigation bundle for this alert so the
         # data-access layer can serve all lookups from it. No-op for CSV/offline
         # data sources (which have no load_alert method).
+        step(self._emit(case_id, "CASE_STARTED", "SUPERVISOR", "RUNNING"))
         if alert_id and hasattr(self.bank, "load_alert"):
             try:
                 self.bank.load_alert(alert_id)
-            except Exception:  # noqa: BLE001 - handled by downstream data errors
-                pass
-
-        step(self._emit(case_id, "CASE_STARTED", "SUPERVISOR", "RUNNING"))
+            except Exception as exc:  # noqa: BLE001
+                # never investigate on stale or missing bank data
+                failed.append("SUPERVISOR")
+                step(self._emit(case_id, "INVESTIGATION_FAILED", "SUPERVISOR", "FAILED",
+                                error=f"Bank data unavailable: {exc}"))
+                return self._fail(case_id, trace, completed, failed,
+                                  f"Bank data unavailable: {exc}")
         step(self._emit(case_id, "SUPERVISOR_ACTIVE", "SUPERVISOR", "RUNNING"))
 
         agentic_meta: dict[str, Any] = {}
@@ -138,7 +142,7 @@ class Supervisor:
         try:
             if self.agentic:
                 step(self._emit(case_id, "DETECTIVE_AGENTIC_START", "DETECTIVE",
-                                metadata={"mode": "agentic"}))
+                                mode="agentic"))
                 from .agentic import AgenticInvestigator
 
                 def _agent_event(event, agent, meta):
@@ -150,7 +154,7 @@ class Supervisor:
                 # the LLM autonomously drives evidence gathering; risk is the
                 # independent deterministic cross-check
                 detective_out, risk, agentic_meta = investigator.investigate(
-                    trigger_transaction_id
+                    trigger_transaction_id, prior_alert_count=prior_alert_count
                 )
             else:
                 step(self._emit(case_id, "DETECTIVE_QUERYING_HISTORY", "DETECTIVE"))
@@ -171,7 +175,8 @@ class Supervisor:
             failed.append("DETECTIVE")
             step(self._emit(case_id, "INVESTIGATION_FAILED", "DETECTIVE", "FAILED",
                             error=str(exc)))
-            return self._fail(case_id, trace, completed, failed, str(exc))
+            return self._fail(case_id, trace, completed, failed, str(exc),
+                              watchman_out=watchman_out, risk=risk)
 
         # --- Jurist ---------------------------------------------------------
         # Run for every case (deterministic corpus retrieval is cheap) so all
@@ -210,7 +215,8 @@ class Supervisor:
             failed.append("SCRIBE")
             step(self._emit(case_id, "INVESTIGATION_FAILED", "SCRIBE", "FAILED",
                             error=str(exc)))
-            return self._fail(case_id, trace, completed, failed, str(exc))
+            return self._fail(case_id, trace, completed, failed, str(exc),
+                              watchman_out=watchman_out, risk=risk)
 
         status = (InvestigationStatus.PARTIAL if failed
                   else InvestigationStatus.COMPLETE)
@@ -245,15 +251,39 @@ class Supervisor:
 
     # --- failure assembly --------------------------------------------------
 
-    def _fail(self, case_id, trace, completed, failed, error) -> FinalInvestigationResult:
-        result = FinalInvestigationResult(
-            case_id=case_id,
-            status=InvestigationStatus.FAILED,
-            recommendation=Recommendation.INSUFFICIENT_EVIDENCE,
-            recommendation_reason=f"Investigation could not complete: {error}",
-            completed_stages=completed,
-            failed_stages=failed,
-            agent_trace=trace,
-        )
-        result.validate()
-        return result
+    def _fail(self, case_id, trace, completed, failed, error,
+              *, watchman_out=None, risk: RiskScore | None = None) -> FinalInvestigationResult:
+        return failed_result(case_id, error, trace, completed, failed,
+                             watchman_out=watchman_out, risk=risk)
+
+
+def failed_result(case_id: str, error: str, trace: list[dict[str, Any]] | None = None,
+                  completed: list[str] | None = None, failed: list[str] | None = None,
+                  *, watchman_out=None, risk: RiskScore | None = None
+                  ) -> FinalInvestigationResult:
+    """A FAILED result with the same shape as a successful one, so clients can
+    always render /result. Keeps the tier and risk if Watchman already ran."""
+    trace = list(trace or [])
+    result = FinalInvestigationResult(
+        case_id=case_id,
+        status=InvestigationStatus.FAILED,
+        recommendation=Recommendation.INSUFFICIENT_EVIDENCE,
+        recommendation_reason=f"Investigation could not complete: {error}",
+        network={"found": False, "nodes": [], "edges": []},
+        case_file={"summary": f"Investigation could not complete: {error}",
+                   "sections": {}, "agentic": {}},
+        completed_stages=list(completed or []),
+        failed_stages=list(failed or []),
+        agent_trace=trace,
+        timeline=[{"event": t.get("event"), "timestamp": t.get("timestamp")}
+                  for t in trace if isinstance(t, dict)],
+    )
+    if watchman_out is not None:
+        result.investigation_tier = watchman_out.investigation_tier
+    if risk is not None:
+        result.risk_score = risk.score
+        result.risk_level = risk.level
+        result.risk_components = risk.to_dict()["components"]
+        result.critical_signals = risk.critical_signals
+    result.validate()
+    return result
