@@ -1,0 +1,90 @@
+# FRAB deterministic risk-scoring configuration.
+#
+# Every number the risk engine produces is derived from these settings plus the
+# customer's data. Thresholds and weights are intentionally explicit here so the
+# score is fully explainable ("why 0.87?") and tunable without code changes.
+#
+# The LLM never sees or changes these values.
+
+# --- Feature normalization thresholds -------------------------------------
+# Each feature maps a raw measurement to a 0.0 (no concern) .. 1.0 (max concern).
+features:
+
+  amount_deviation:
+    # ratio = trigger_amount / historical_avg_outgoing.
+    # ratio <= 1 -> 0.0 ; ratio >= max_ratio -> 1.0 ; linear in between.
+    max_ratio: 10.0
+    # ignore baselines computed from fewer than this many historical txns
+    min_history: 3
+
+  velocity:
+    # count of same-direction (outgoing) transactions in the window ending at
+    # (and including) the trigger. count <= 1 -> 0.0 ; >= max_count -> 1.0.
+    window_minutes: 15
+    max_count: 8
+
+  beneficiary_novelty:
+    # binary-ish signal, softened: brand-new beneficiary -> 1.0,
+    # established -> 0.0, unknown/first-seen-in-history -> new_value.
+    new_value: 1.0
+    established_value: 0.0
+
+  behaviour_deviation:
+    # ratio = trigger_amount / historical_max_outgoing.
+    # captures "larger than anything this customer has ever done".
+    # ratio <= 1 -> scaled ; ratio >= max_ratio -> 1.0.
+    max_ratio: 3.0
+    min_history: 3
+
+  network_risk:
+    # fan-in = number of DISTINCT customers that sent funds to the same
+    # destination within a window CENTRED on the trigger (see features.py for
+    # why the window is symmetric). fan_in <= 1 -> 0.0 ; >= max_fan_in -> 1.0.
+    window_minutes: 30
+    max_fan_in: 5
+
+  previous_alerts:
+    # count of prior alerts on this customer. count = 0 -> 0.0 ;
+    # >= max_count -> 1.0. (Dataset has ~1 alert/customer, so this stays low.)
+    max_count: 3
+
+# --- Risk-score weights (must sum to 1.0) ---------------------------------
+weights:
+  amount_deviation: 0.25
+  velocity: 0.20
+  beneficiary_novelty: 0.15
+  behaviour_deviation: 0.15
+  network_risk: 0.15
+  previous_alerts: 0.10
+
+# --- Risk-level bands (applied to the weighted 0..1 score) ----------------
+risk_levels:
+  HIGH: 0.66
+  MEDIUM: 0.33
+  # anything below MEDIUM is LOW
+
+# --- Critical-signal escalation -------------------------------------------
+# Rationale: real AML triage escalates on a SINGLE strong indicator. A weighted
+# average dilutes single-signal attacks (a pure velocity burst or pure
+# structuring maxes one feature but averages low). So alongside the weighted
+# score we apply a deterministic rule: if any listed feature meets its critical
+# threshold, the assessment is escalated to at least the given level.
+#
+# This keeps the score honest (it remains the weighted density) while making the
+# LEVEL reflect how AML analysts actually triage. Both are deterministic and
+# fully explainable — no LLM involvement.
+critical_signals:
+  # feature_name: {threshold: <normalized value>, min_level: HIGH|MEDIUM}
+  amount_deviation:    {threshold: 0.9, min_level: HIGH}
+  velocity:            {threshold: 0.9, min_level: HIGH}
+  behaviour_deviation: {threshold: 0.9, min_level: HIGH}
+  network_risk:        {threshold: 0.6, min_level: HIGH}
+  beneficiary_novelty: {threshold: 1.0, min_level: MEDIUM}
+
+# --- Named-pattern escalation ---------------------------------------------
+# A confidently detected financial-crime pattern (from detect_pattern) is a
+# critical signal on its own and raises the level, even when no single scalar
+# feature maxes out. This is what lets structuring / repeated-cashout resolve.
+pattern_escalation:
+  min_confidence: 0.75
+  raise_to: HIGH

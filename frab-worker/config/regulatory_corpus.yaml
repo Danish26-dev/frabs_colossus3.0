@@ -1,0 +1,167 @@
+# Curated regulatory corpus for the Jurist agent (Phase 1).
+#
+# SMALL AND CORRECT beats broad and shaky. These are short, paraphrased
+# references to PUBLIC Indian AML/CFT frameworks, mapped to the named patterns
+# the deterministic layer detects. Jurist RETRIEVES from this corpus — it does
+# not invent citations. If a pattern has no entry, Jurist returns no context
+# (available=True, empty list) rather than fabricating one.
+#
+# Framing is deliberately "indicator consistent with" — this is regulatory
+# CONTEXT / decision support, not legal advice or a compliance determination.
+
+STRUCTURING:
+  - source: "PMLA, 2002"
+    reference: "Prevention of Money-Laundering Act — placement/layering"
+    excerpt: >
+      Deliberately splitting value into multiple transactions kept below a
+      reporting threshold is a recognised placement/layering technique.
+    relevance: >
+      The observed sub-threshold transfers to a single beneficiary are
+      consistent with structuring indicators; consider STR evaluation.
+  - source: "FIU-IND"
+    reference: "STR reporting guidance"
+    excerpt: >
+      Suspicious Transaction Reports are judgment-based with no fixed value
+      threshold; patterns designed to avoid scrutiny are reportable.
+    relevance: >
+      A structuring pattern typically resolves into an STR consideration.
+
+MULE_COLLECTION:
+  - source: "RBI Master Direction on KYC"
+    reference: "Customer Due Diligence / account misuse"
+    excerpt: >
+      Accounts receiving funds from multiple unrelated parties in a short
+      window are a recognised money-mule / collection-account indicator.
+    relevance: >
+      The fan-in of unrelated senders to one destination is consistent with a
+      mule-collection indicator warranting enhanced due diligence.
+  - source: "FATF Recommendations"
+    reference: "Money laundering typologies"
+    excerpt: >
+      Layering through collection accounts fed by many senders is a documented
+      laundering typology.
+    relevance: >
+      The network fan-in observed matches a documented layering typology.
+
+VELOCITY_BURST:
+  - source: "RBI Master Direction on Fraud Risk Management"
+    reference: "Transaction monitoring / account takeover indicators"
+    excerpt: >
+      A sudden burst of outgoing transfers inconsistent with prior behaviour is
+      a recognised account-takeover / rapid-drain indicator.
+    relevance: >
+      The rapid outgoing burst is consistent with account-takeover indicators.
+
+REPEATED_CASHOUT:
+  - source: "FATF Recommendations"
+    reference: "Cash-extraction / layering typologies"
+    excerpt: >
+      Rapid extraction of inbound funds via repeated cash-outs is a layering /
+      cash-extraction indicator.
+    relevance: >
+      The repeated cash-outs following an inbound credit are consistent with a
+      cash-extraction indicator; monitor and correlate source of funds.
+
+# Single-transaction anomalies (no named sequence pattern) map to general CDD.
+HIGH_VALUE_NEW_BENEFICIARY:
+  - source: "RBI Master Direction on KYC"
+    reference: "Enhanced Due Diligence"
+    excerpt: >
+      Large transfers to newly added beneficiaries inconsistent with the
+      customer profile warrant enhanced due diligence.
+    relevance: >
+      A high-value transfer to a first-time beneficiary is an EDD trigger.
+
+KYC_MISMATCH:
+  - source: "RBI Master Direction on KYC"
+    reference: "Risk categorisation / income consistency"
+    excerpt: >
+      Transaction value grossly inconsistent with the declared KYC income
+      profile requires re-verification and risk re-categorisation.
+    relevance: >
+      The transfer is inconsistent with the declared income band; recommend KYC
+      re-verification.
+  - source: "PMLA, 2002"
+    reference: "Customer Due Diligence obligations"
+    excerpt: >
+      Reporting entities must verify identity and monitor transactions for
+      consistency with the customer's known profile and source of funds.
+    relevance: >
+      A transfer far exceeding the declared profile triggers CDD review.
+
+# --- Alert-type keyed entries (used when no named sequence pattern is
+# detected; the bank alert_type still maps to a regulatory context). ---
+
+NEW_BENEFICIARY:
+  - source: "RBI Master Direction on KYC"
+    reference: "Beneficiary onboarding / Customer Due Diligence"
+    excerpt: >
+      Transfers to newly added beneficiaries are monitored; a first transfer to
+      a new payee is a standard due-diligence checkpoint.
+    relevance: >
+      A significant transfer to a first-time beneficiary warrants confirmation
+      and monitoring.
+
+BEHAVIOUR_DEVIATION:
+  - source: "RBI Master Direction on Fraud Risk Management"
+    reference: "Behavioural transaction monitoring"
+    excerpt: >
+      Transactions materially inconsistent with a customer's established
+      behavioural baseline are recognised monitoring triggers.
+    relevance: >
+      The transaction magnitude deviates sharply from the customer's baseline;
+      review for account takeover or coercion.
+
+VELOCITY_SPIKE:
+  - source: "RBI Master Direction on Fraud Risk Management"
+    reference: "Transaction monitoring / account takeover indicators"
+    excerpt: >
+      A sudden burst of outgoing transfers inconsistent with prior behaviour is
+      a recognised account-takeover / rapid-drain indicator.
+    relevance: >
+      The rapid outgoing burst is consistent with account-takeover indicators.
+
+CROSS_ACCOUNT_BURST:
+  - source: "FATF Recommendations"
+    reference: "Smurfing / coordinated transfers typology"
+    excerpt: >
+      Multiple accounts converging on a single destination in a tight window is
+      a documented smurfing / coordinated-layering typology.
+    relevance: >
+      The cross-account convergence is consistent with coordinated layering;
+      consider STR evaluation.
+  - source: "PMLA, 2002"
+    reference: "Placement/layering"
+    excerpt: >
+      Coordinated movement of value across accounts to obscure origin is a
+      recognised layering technique.
+    relevance: >
+      The burst across accounts is consistent with layering indicators.
+
+HIGH_VALUE_TRANSFER:
+  - source: "RBI Master Direction on KYC"
+    reference: "Enhanced Due Diligence / high-value monitoring"
+    excerpt: >
+      High-value transfers are subject to enhanced monitoring; context and
+      history determine whether they are consistent with the customer profile.
+    relevance: >
+      A high-value transfer is reviewed against the customer's history before
+      disposition.
+  - source: "FIU-IND"
+    reference: "CTR / high-value reporting context"
+    excerpt: >
+      High-value transactions are monitored; whether they warrant reporting
+      depends on consistency with established behaviour.
+    relevance: >
+      Assess the transfer against prior established transfers before escalation.
+
+FALSE_POSITIVE_HISTORY:
+  - source: "RBI Master Direction on Fraud Risk Management"
+    reference: "Alert disposition / false-positive handling"
+    excerpt: >
+      Alerts consistent with a customer's documented history of similar
+      legitimate activity may be dispositioned as false positives with recorded
+      justification.
+    relevance: >
+      The transaction matches an established pattern of prior legitimate
+      transfers; supports closing as a false positive with audit trail.
