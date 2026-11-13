@@ -45,6 +45,10 @@ from .data_access import parse_event_time
 
 _DEFAULT_BASE = "https://frab-git-379796489354.asia-south1.run.app"
 
+
+class BankDataError(RuntimeError):
+    """The bank API failed (unreachable, non-404 error, or invalid response)."""
+
 # fields in the investigation bundle's alert object that are answer-key / must
 # not reach the worker's reasoning.
 _ANSWER_KEY_FIELDS = {"expected_reason", "scenario_id", "scenario"}
@@ -58,6 +62,7 @@ class APIDataAccess:
         self.timeout = timeout
         self.alert_id = alert_id or os.environ.get("FRAB_ALERT_ID", "")
         self._bundle: dict[str, Any] | None = None
+        self._fetched = False  # True once a fetch for alert_id succeeded (404 included)
 
     # --- HTTP ---------------------------------------------------------------
 
@@ -72,22 +77,43 @@ class APIDataAccess:
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 return None
-            raise
+            raise BankDataError(f"Bank API error {exc.code} ({path})") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise RuntimeError(f"Bank API unreachable ({path}): {exc}") from exc
+            raise BankDataError(f"Bank API unreachable ({path}): {exc}") from exc
+        except ValueError as exc:  # not JSON
+            raise BankDataError(f"Bank API returned invalid JSON ({path})") from exc
 
     # --- investigation bundle (primary source) ------------------------------
 
     def load_alert(self, alert_id: str) -> dict[str, Any] | None:
-        """Fetch and cache the investigation bundle for an alert."""
-        self.alert_id = alert_id
-        self._bundle = self._get(f"/investigation/{alert_id}")
-        return self._bundle
+        """Fetch and cache the investigation bundle for an alert.
+
+        Raises BankDataError if the bank API fails; returns None if the alert
+        does not exist. The alert id and bundle are only replaced together,
+        after a successful fetch, so a failure never leaves a mismatched pair.
+        Instances are per case (see data_access.bank_for_alert), never shared
+        between concurrent investigations.
+        """
+        if self._fetched and self.alert_id == alert_id:
+            return self._bundle
+        bundle = self._get(f"/investigation/{alert_id}")
+        self.alert_id, self._bundle, self._fetched = alert_id, bundle, True
+        return bundle
 
     def _ensure_bundle(self) -> dict[str, Any]:
-        if self._bundle is None and self.alert_id:
+        if not self._fetched and self.alert_id:
             self.load_alert(self.alert_id)
         return self._bundle or {}
+
+    @staticmethod
+    def _obj(b: dict[str, Any], key: str) -> dict[str, Any]:
+        v = b.get(key)
+        return v if isinstance(v, dict) else {}
+
+    @staticmethod
+    def _list(b: dict[str, Any], key: str) -> list[Any]:
+        v = b.get(key)
+        return v if isinstance(v, list) else []
 
     # --- normalization ------------------------------------------------------
 
@@ -96,7 +122,10 @@ class APIDataAccess:
         if not raw:
             return None
         t = dict(raw)
-        t["amount"] = float(t.get("amount", 0.0))
+        try:
+            t["amount"] = float(t.get("amount") or 0.0)
+        except (TypeError, ValueError):
+            t["amount"] = 0.0
         if t.get("event_time"):
             t["_event_dt"] = parse_event_time(t["event_time"])
         return t
@@ -105,30 +134,30 @@ class APIDataAccess:
 
     def get_customer(self, customer_id: str) -> dict[str, Any] | None:
         b = self._ensure_bundle()
-        if b.get("customer", {}).get("customer_id") == customer_id:
+        if self._obj(b, "customer").get("customer_id") == customer_id:
             return b["customer"]
         return self._get(f"/customers/{customer_id}")
 
     def get_account(self, account_id: str) -> dict[str, Any] | None:
         b = self._ensure_bundle()
-        if b.get("account", {}).get("account_id") == account_id:
+        if self._obj(b, "account").get("account_id") == account_id:
             return b["account"]
         return self._get(f"/accounts/{account_id}")
 
     def get_kyc(self, customer_id: str) -> dict[str, Any] | None:
         b = self._ensure_bundle()
-        if b.get("kyc", {}).get("customer_id") == customer_id:
+        if self._obj(b, "kyc").get("customer_id") == customer_id:
             return b["kyc"]
         return self._get(f"/customers/{customer_id}/kyc")
 
     def get_transaction(self, transaction_id: str) -> dict[str, Any] | None:
         b = self._ensure_bundle()
         trig = b.get("trigger_transaction")
-        if trig and trig.get("transaction_id") == transaction_id:
+        if isinstance(trig, dict) and trig.get("transaction_id") == transaction_id:
             return self._normalize_txn(trig)
         # search related + history in the bundle
-        for t in b.get("related_transactions", []) + b.get("transaction_history", []):
-            if t.get("transaction_id") == transaction_id:
+        for t in self._list(b, "related_transactions") + self._list(b, "transaction_history"):
+            if isinstance(t, dict) and t.get("transaction_id") == transaction_id:
                 return self._normalize_txn(t)
         return None
 
@@ -137,7 +166,7 @@ class APIDataAccess:
         exclude_transaction_id: str | None = None,
     ) -> list[dict[str, Any]]:
         b = self._ensure_bundle()
-        raw = list(b.get("transaction_history", []))
+        raw = list(self._list(b, "transaction_history"))
         # fall back to the account endpoint if the bundle history is empty
         if not raw:
             cust = self.get_customer(customer_id) or {}
@@ -148,7 +177,9 @@ class APIDataAccess:
         txns = [self._normalize_txn(r) for r in raw if r]
         out = []
         for t in txns:
-            if exclude_transaction_id and t["transaction_id"] == exclude_transaction_id:
+            if not t or not t.get("_event_dt"):
+                continue  # untimestamped rows cannot be placed in the history
+            if exclude_transaction_id and t.get("transaction_id") == exclude_transaction_id:
                 continue
             if before is not None and t.get("_event_dt") and t["_event_dt"] > before:
                 continue
@@ -162,12 +193,14 @@ class APIDataAccess:
         """Fan-in: senders to a destination. From the bundle's related_transactions
         (plus the trigger itself), which is where the API exposes the mule signal."""
         b = self._ensure_bundle()
-        candidates = list(b.get("related_transactions", []))
+        candidates = [t for t in self._list(b, "related_transactions") if isinstance(t, dict)]
         trig = b.get("trigger_transaction")
-        if trig:
+        if isinstance(trig, dict) and not any(
+                t.get("transaction_id") == trig.get("transaction_id") for t in candidates):
             candidates.append(trig)
-        txns = [self._normalize_txn(t) for t in candidates
-                if t and t.get("nameDest") == dest]
+        txns = [n for n in (self._normalize_txn(t) for t in candidates
+                            if t.get("nameDest") == dest)
+                if n and n.get("_event_dt")]
         if before is None:
             return txns
         return [t for t in txns if t.get("_event_dt") and t["_event_dt"] <= before]
@@ -176,8 +209,8 @@ class APIDataAccess:
         self, customer_id: str, beneficiary_id: str
     ) -> dict[str, Any] | None:
         b = self._ensure_bundle()
-        for bene in b.get("beneficiaries", []):
-            if (bene.get("customer_id") == customer_id
+        for bene in self._list(b, "beneficiaries"):
+            if isinstance(bene, dict) and (bene.get("customer_id") == customer_id
                     and bene.get("beneficiary_id") == beneficiary_id):
                 return bene
         return None

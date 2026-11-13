@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import csv
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any, Protocol, runtime_checkable
 
@@ -89,8 +89,14 @@ def _default_data_dir() -> str:
 
 
 def parse_event_time(value: str) -> datetime:
-    """Parse an ISO event_time string into a naive datetime."""
-    return datetime.fromisoformat(value)
+    """Parse an ISO event_time string into a naive datetime.
+
+    Timezone-aware values are converted to naive UTC, so aware and naive
+    timestamps never meet in a comparison (which would raise TypeError)."""
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def _read_csv(name: str, data_dir: str | None = None) -> list[dict[str, str]]:
@@ -203,6 +209,22 @@ class CSVDataAccess:
 
 # Backwards-compatible alias: existing call sites / tests used `BankData`.
 BankData = CSVDataAccess
+
+
+def bank_for_alert(alert_id: str) -> BankDataAccess:
+    """Data access for ONE investigation.
+
+    In API mode this is a fresh APIDataAccess bound to the alert, with its
+    bundle fetched up front (raises BankDataError if the bank API fails), so
+    concurrent investigations never share or overwrite each other's data.
+    CSV data is immutable, so the shared instance is safe to reuse.
+    """
+    if os.environ.get("FRAB_DATA_SOURCE", "csv").lower() == "api" and alert_id:
+        from .api_data_access import APIDataAccess
+        bank = APIDataAccess(alert_id=alert_id)
+        bank.load_alert(alert_id)
+        return bank
+    return default_bank_data()
 
 
 @lru_cache(maxsize=1)
