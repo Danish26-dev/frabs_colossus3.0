@@ -13,10 +13,12 @@ endpoints, never to Vapi directly.
 from __future__ import annotations
 
 import os
+import re
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from . import __version__
 from .auth import check_webhook_secret, require_api_token
@@ -51,6 +53,25 @@ else:
 _cases = BankApiCaseSource(_cfg.bank_api_url)
 _service = VoiceEscalationService(_vapi, _store, _cases)
 
+# Production (durable Firestore store) must fail CLOSED: refuse to start rather
+# than run without auth, without a webhook secret, or with simulated calls.
+if _store_kind == "firestore":
+    _missing = [n for n in ("VOICE_API_TOKEN", "VOICE_WEBHOOK_SECRET")
+                if not os.environ.get(n, "").strip()]
+    if _vapi.mock:
+        _missing.append("VAPI_MOCK must be off")
+    elif not _cfg.configured:
+        _missing.append("VAPI_API_KEY/VAPI_ASSISTANT_ID/VAPI_PHONE_NUMBER_ID")
+    if _missing:
+        raise RuntimeError("Refusing to start in production; missing: " + ", ".join(_missing))
+
+_E164 = re.compile(r"^\+[1-9]\d{6,14}$")
+_SAFE_CALL_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+
+
+def _phone_override_allowed() -> bool:
+    return os.environ.get("VOICE_ALLOW_PHONE_OVERRIDE", "").lower() in ("1", "true", "on")
+
 app = FastAPI(title="FRAB Voice Escalation Service", version=__version__)
 
 # Frontend origins allowed by default; override with VOICE_CORS_ORIGINS
@@ -73,7 +94,7 @@ def health():
     return {
         "status": "ok",
         "version": __version__,
-        "vapi_mode": "mock" if _vapi.mock else "live",
+        "vapi_mode": _vapi.mode,
         "assistant_configured": bool(_cfg.vapi_assistant_id),
     }
 
@@ -89,8 +110,18 @@ def start_voice_escalation(case_id: str, req: VoiceEscalationRequest):
         "verification_expected_answer": req.verification_expected_answer,
         **req.extra_variables,
     }
+    # the backend directory decides who is called; a phone in the request is
+    # only honoured when explicitly enabled (local testing), and must be E.164
+    phone_override = ""
+    if req.customer_phone and _phone_override_allowed():
+        if not _E164.match(req.customer_phone):
+            return JSONResponse(status_code=422, content={
+                "case_id": case_id, "status": "FAILED",
+                "error": {"code": "INVALID_REQUEST",
+                          "message": "customer_phone must be E.164, e.g. +919800000000"}})
+        phone_override = req.customer_phone
     call = _service.start_escalation(
-        case_id, alert_id=req.alert_id, customer_phone=req.customer_phone,
+        case_id, alert_id=req.alert_id, customer_phone=phone_override,
         overrides={k: v for k, v in overrides.items() if v != ""},
     )
     return EscalationStartResponse(
@@ -107,33 +138,37 @@ async def vapi_webhook(request: Request):
         body = await request.json()
     except Exception:  # noqa: BLE001 - malformed body, ack to stop retries
         return JSONResponse(status_code=200, content={"received": True})
+    if not isinstance(body, dict) or not isinstance(wh.extract_message(body), dict):
+        return JSONResponse(status_code=200, content={"received": True, "note": "ignored"})
 
     call_id = wh.extract_call_id(body)
-    if not call_id:
+    if not isinstance(call_id, str) or not _SAFE_CALL_ID.match(call_id):
         return JSONResponse(status_code=200, content={"received": True, "note": "no call id"})
 
     etype = wh.event_type(body)
-    # DEBUG: log end-of-call payloads so we can see the assistant's actual
-    # structured-output shape/field names. Temporary — remove after tuning.
+    # Optional diagnostics: payload SHAPE only (key names), never content —
+    # the payload holds the transcript, recording links and the prompt.
     if os.environ.get("VOICE_DEBUG_WEBHOOK", "").lower() in ("1", "true", "on") \
             and etype in ("end-of-call-report", "end-of-call"):
-        import json as _json
         msg = wh.extract_message(body)
-        analysis = msg.get("analysis") if isinstance(msg, dict) else None
-        artifact = msg.get("artifact") if isinstance(msg, dict) else None
-        art_keys = list(artifact.keys()) if isinstance(artifact, dict) else None
-        print("VOICE_WEBHOOK_EOC keys=", list(msg.keys()) if isinstance(msg, dict) else type(msg),
-              " analysis=", _json.dumps(analysis)[:1500] if analysis else None,
-              " artifact_keys=", art_keys,
-              " artifact=", _json.dumps(artifact)[:3000] if artifact else None,
-              " ended=", (msg or {}).get("endedReason"), flush=True)
+        artifact = msg.get("artifact") if isinstance(msg.get("artifact"), dict) else {}
+        print("VOICE_WEBHOOK_EOC keys=", sorted(msg.keys()),
+              " artifact_keys=", sorted(artifact.keys()),
+              " ended=", msg.get("endedReason"), flush=True)
+
+    # store calls are blocking (Firestore): keep them off the event loop
     if etype in ("end-of-call-report", "end-of-call"):
         update = wh.parse_end_of_call(body)
-        _service.apply_webhook(call_id, f"{call_id}:end-of-call", update,
-                               new_status=update.get("status"))
-    else:
+        await run_in_threadpool(_service.apply_webhook, call_id, f"{call_id}:end-of-call",
+                                update, new_status=update.get("status"))
+    elif etype == "status-update":
         status = wh.map_status(body)
-        _service.apply_webhook(call_id, f"{call_id}:{etype}", {}, new_status=status)
+        if status:
+            # one key per status value, so ringing -> in-progress both apply
+            await run_in_threadpool(
+                _service.apply_webhook, call_id,
+                f"{call_id}:status-update:{wh.raw_status(body)}", {}, new_status=status)
+    # other message types (conversation/speech updates) carry no state change
 
     return JSONResponse(status_code=200, content={"received": True})
 
@@ -142,6 +177,10 @@ async def vapi_webhook(request: Request):
          dependencies=[Depends(require_api_token)])
 def get_voice_status(case_id: str):
     call = _store.latest_for_case(case_id)
+    if call is not None:
+        # a call still "active" long after it started is checked against Vapi,
+        # so a lost webhook can never leave the case stuck at CALLING
+        call = _service.reconcile(call)
     timeline = _store.timeline_for_case(case_id)
     if call is None:
         return VoiceStatusResponse(case_id=case_id, status="NONE", timeline=timeline)

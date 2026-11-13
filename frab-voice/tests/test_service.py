@@ -25,7 +25,7 @@ class FakeCaseSource:
 
 def _mock_service():
     cfg = VoiceConfig(vapi_api_key="", vapi_assistant_id="fad86425", 
-                      vapi_phone_number_id="+15403588511", vapi_base_url="https://api.vapi.ai",
+                      vapi_phone_number_id="+15550000000", vapi_base_url="https://api.vapi.ai",
                       bank_api_url="", store_path="", mock=True)
     return VoiceEscalationService(VapiClient(cfg), InMemoryVoiceStore(), FakeCaseSource())
 
@@ -114,12 +114,92 @@ def test_unknown_call_id_returns_none():
     assert svc.apply_webhook("does-not-exist", "k", {}, new_status="COMPLETED") is None
 
 
-def test_multiple_escalations_same_case_distinct_records():
+def test_double_escalation_while_active_reuses_the_call():
+    # a double click must not ring the customer twice
     svc = _mock_service()
     c1 = svc.start_escalation("CASE0007", alert_id="ALT0007", customer_phone="+91", overrides={})
     c2 = svc.start_escalation("CASE0007", alert_id="ALT0007", customer_phone="+91", overrides={})
+    assert c1.call_id == c2.call_id
+    assert len(svc.store.list_for_case("CASE0007")) == 1
+
+
+def test_new_escalation_after_call_ended_creates_new_record():
+    svc = _mock_service()
+    c1 = svc.start_escalation("CASE0007", alert_id="ALT0007", customer_phone="+91", overrides={})
+    upd = wh.parse_end_of_call(_end_of_call(c1.call_id, ended_reason="customer-did-not-answer"))
+    svc.apply_webhook(c1.call_id, f"{c1.call_id}:end-of-call", upd, new_status=upd["status"])
+    c2 = svc.start_escalation("CASE0007", alert_id="ALT0007", customer_phone="+91", overrides={})
     assert c1.call_id != c2.call_id
     assert len(svc.store.list_for_case("CASE0007")) == 2
+
+
+def test_no_call_when_case_data_unavailable():
+    svc = _mock_service()
+    svc.cases = type("Down", (), {"get_case_context": lambda self, c, a: {
+        "case_id": c, "_case_data_ok": False, "_customer_phone": "+910000000000"}})()
+    call = svc.start_escalation("C9", alert_id="A9", customer_phone="", overrides={})
+    assert call.status == CallStatus.FAILED
+    assert "Case data unavailable" in call.error
+
+
+def test_active_status_never_regresses():
+    svc = _mock_service()
+    call = svc.start_escalation("C1", alert_id="A1", customer_phone="+91", overrides={})
+    svc.apply_webhook(call.call_id, "k1", {}, new_status=CallStatus.IN_PROGRESS)
+    updated = svc.apply_webhook(call.call_id, "k2", {}, new_status=CallStatus.CALLING)
+    assert updated.status == CallStatus.IN_PROGRESS
+
+
+def test_unreachable_wins_over_vapi_summary():
+    body = _end_of_call("x", structured=None, ended_reason="voicemail")
+    body["message"]["summary"] = "Reached voicemail."
+    assert wh.parse_end_of_call(body)["status"] == CallStatus.UNREACHABLE
+
+
+def test_platform_error_is_failed_not_pending():
+    body = _end_of_call("x", structured=None, ended_reason="pipeline-error-openai-llm-failed")
+    out = wh.parse_end_of_call(body)
+    assert out["status"] == CallStatus.FAILED and "error" in out["error"]
+
+
+def test_structured_fields_are_coerced():
+    out = wh.parse_end_of_call(_end_of_call("x", {
+        "verification_status": "VERIFIED", "call_outcome": "INFORMATION_OBTAINED",
+        "customer_statements": [{"statement": "It was rent"}], "unresolved_questions": "one",
+        "customer_requested_human": "false"}))
+    assert out["customer_statements"] == ["It was rent"]
+    assert out["unresolved_questions"] == ["one"]
+    assert out["customer_requested_human"] is False
+
+
+def test_reconcile_applies_vapi_result_for_stuck_call():
+    from datetime import datetime, timedelta, timezone
+    svc = _mock_service()
+    call = svc.start_escalation("C1", alert_id="A1", customer_phone="+91", overrides={})
+    call.created_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    svc.store.save(call)
+    svc.vapi.mock = False      # behave like live Vapi for reconciliation
+    svc.vapi.get_call = lambda cid: {"id": cid, "status": "ended",
+                                     "endedReason": "customer-ended-call",
+                                     "analysis": {"structuredData": {
+                                         "verification_status": "VERIFIED",
+                                         "call_outcome": "INFORMATION_OBTAINED",
+                                         "summary": "Confirmed."}}}
+    out = svc.reconcile(svc.store.get(call.call_id))
+    assert out.status == CallStatus.COMPLETED and out.verification_status == "VERIFIED"
+
+
+def test_unconfigured_live_vapi_fails_instead_of_mocking():
+    from frab_voice.vapi_client import VapiClient as VC, VapiError
+    cfg = VoiceConfig("", "", "", "https://api.vapi.ai", "", "", mock=False)
+    client = VC(cfg)
+    assert client.mock is False and client.mode == "unconfigured"
+    try:
+        client.create_call(customer_number="+910000000000", variable_values={})
+        raised = False
+    except VapiError:
+        raised = True
+    assert raised
 
 
 def test_recommended_actions_from_assessment():

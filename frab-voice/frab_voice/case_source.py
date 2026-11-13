@@ -68,22 +68,28 @@ class BankApiCaseSource:
         can, with empty strings for missing fields (never fabricated data).
         """
         bundle = self._get(f"/investigation/{alert_id}") if alert_id else None
-        if not bundle:
+        if not isinstance(bundle, dict) or not bundle:
+            # `_case_data_ok` False: the service refuses to call a customer with
+            # blank case details (a bank outage must not look like a success)
             return {
                 "case_id": case_id, "alert_id": alert_id,
                 "customer_name": "", "customer_id": "", "account_id": "",
                 "transaction_id": "", "transaction_amount": "", "transaction_date": "",
                 "beneficiary": "", "alert_reason": "", "case_type": "",
-                "_customer_phone": "",
+                "_customer_phone": "", "_case_data_ok": False,
             }
 
-        alert = {k: v for k, v in (bundle.get("alert") or {}).items()
-                 if k not in _ANSWER_KEY}
-        customer = bundle.get("customer") or {}
-        account = bundle.get("account") or {}
-        trigger = bundle.get("trigger_transaction") or {}
+        def _obj(key: str) -> dict[str, Any]:
+            v = bundle.get(key)
+            return v if isinstance(v, dict) else {}
+
+        alert = {k: v for k, v in _obj("alert").items() if k not in _ANSWER_KEY}
+        customer = _obj("customer")
+        account = _obj("account")
+        trigger = _obj("trigger_transaction")
 
         return {
+            "_case_data_ok": True,
             "case_id": case_id,
             "alert_id": alert_id,
             "case_type": alert.get("alert_type", ""),

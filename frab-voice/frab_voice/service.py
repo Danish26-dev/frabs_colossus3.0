@@ -55,20 +55,75 @@ def recommended_actions(frab_recommendation: str,
     return out
 
 
+_ACTIVE_RANK = {CallStatus.QUEUED: 0, CallStatus.CALLING: 1, CallStatus.IN_PROGRESS: 2}
+
+# reconcile an active call with Vapi when no webhook has finished it
+_RECONCILE_AFTER_S = 60.0
+_RECONCILE_EVERY_S = 20.0
+
+
+def _age_seconds(iso: str) -> float:
+    try:
+        return (datetime.now(timezone.utc) - datetime.fromisoformat(iso)).total_seconds()
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class VoiceEscalationService:
     def __init__(self, vapi: VapiClient, store: VoiceStore, cases: CaseSource) -> None:
         self.vapi = vapi
         self.store = store
         self.cases = cases
+        self._last_reconcile: dict[str, float] = {}
+
+    # --- reconcile with Vapi (lost / unconfigured webhooks) -----------------
+
+    def reconcile(self, call: VoiceCall) -> VoiceCall:
+        """If a call is still active long after it started, ask Vapi for its
+        real state and apply the result. Recovers calls whose webhook never
+        arrived (secret mismatch, wrong server URL, an instance restart).
+        Uses the same idempotency key as the webhook, so a late webhook is a
+        no-op. Rate-limited per call. Never raises."""
+        if (call.status not in CallStatus.ACTIVE or getattr(self.vapi, "mock", False)
+                or _age_seconds(call.created_at) < _RECONCILE_AFTER_S
+                or call.call_id.startswith(("failed-", "unknown-"))):
+            return call
+        now = time.monotonic()
+        if now - self._last_reconcile.get(call.call_id, 0.0) < _RECONCILE_EVERY_S:
+            return call
+        self._last_reconcile[call.call_id] = now
+        try:
+            remote = self.vapi.get_call(call.call_id)
+        except VapiError:
+            return call
+        if not isinstance(remote, dict):
+            return call
+        from . import webhook_parser as wh
+        body = {"message": remote}
+        if str(remote.get("status", "")).lower() == "ended":
+            update = wh.parse_end_of_call(body)
+            return self.apply_webhook(call.call_id, f"{call.call_id}:end-of-call", update,
+                                      new_status=update.get("status")) or call
+        status = wh.map_status(body)
+        if status:
+            return self.apply_webhook(
+                call.call_id, f"{call.call_id}:status-update:{wh.raw_status(body)}", {},
+                new_status=status) or call
+        return call
 
     # --- start an escalation ------------------------------------------------
 
     def start_escalation(self, case_id: str, *, alert_id: str, customer_phone: str,
                          overrides: dict[str, Any]) -> VoiceCall:
+        # 0. one live call per case: a double click must not ring the customer twice
+        latest = self.store.latest_for_case(case_id)
+        if latest is not None and latest.status in CallStatus.ACTIVE:
+            return latest
+
         # 1. authoritative case context (bank bundle, answer-key stripped)
         ctx = self.cases.get_case_context(case_id, alert_id)
         # 2. resolve the receiver phone: backend directory is source of truth;
-        #    a value passed in the request overrides (demo convenience).
+        #    the API layer only passes an override when explicitly allowed.
         phone = customer_phone or ctx.get("_customer_phone", "")
         # 3. build the assistant variables (case data + case-derived overrides)
         variables = build_variables(ctx, overrides)
@@ -77,20 +132,18 @@ class VoiceEscalationService:
             "event": VoiceEvent.ESCALATION_REQUESTED, "timestamp": _now(),
         })
 
+        # never call a customer with blank case details: if the bank data for
+        # the alert could not be loaded, fail honestly instead
+        if ctx.get("_case_data_ok") is False:
+            return self._record_failure(
+                case_id, ctx, "Case data unavailable from the bank API; no call placed.",
+                "case data unavailable")
+
         # no phone resolvable -> honest FAILED, don't attempt a call
         if not phone:
-            call = VoiceCall(
-                call_id=f"failed-{uuid.uuid4().hex[:8]}", case_id=case_id,
-                status=CallStatus.FAILED, created_at=_now(),
-                case_type=ctx.get("case_type", ""),
-                error="No customer phone number available for this case.",
-            )
-            self.store.save(call)
-            self.store.add_timeline_event(case_id, {
-                "event": VoiceEvent.CALL_FAILED, "timestamp": _now(),
-                "detail": "no customer phone",
-            })
-            return call
+            return self._record_failure(
+                case_id, ctx, "No customer phone number available for this case.",
+                "no customer phone")
 
         # 4. create the call on the EXISTING assistant
         try:
@@ -99,20 +152,15 @@ class VoiceEscalationService:
             )
         except VapiError as exc:
             # record a failed call so the case shows the failure honestly
-            call = VoiceCall(
-                call_id=f"failed-{uuid.uuid4().hex[:8]}", case_id=case_id,
-                status=CallStatus.FAILED, created_at=_now(),
-                case_type=ctx.get("case_type", ""), error=str(exc),
-            )
-            self.store.save(call)
-            self.store.add_timeline_event(case_id, {
-                "event": VoiceEvent.CALL_FAILED, "timestamp": _now(),
-                "detail": str(exc),
-            })
-            return call
+            return self._record_failure(case_id, ctx, str(exc), "call could not be placed")
 
-        # 4. persist the authoritative call_id
-        call_id = call_obj.get("id") or f"unknown-{uuid.uuid4().hex[:8]}"
+        # 4. persist the authoritative call_id (Vapi must return one; without it
+        #    no webhook or reconciliation could ever match the call)
+        call_id = call_obj.get("id") if isinstance(call_obj, dict) else None
+        if not call_id:
+            return self._record_failure(
+                case_id, ctx, "Vapi accepted the call but returned no call id.",
+                "no call id from Vapi")
         call = VoiceCall(
             call_id=call_id, case_id=case_id, status=CallStatus.CALLING,
             created_at=_now(), case_type=ctx.get("case_type", ""),
@@ -133,6 +181,21 @@ class VoiceEscalationService:
         if getattr(self.vapi, "mock", False) and _mock_autocomplete_enabled():
             self._complete_mock_call(call, ctx, overrides)
 
+        return call
+
+    def _record_failure(self, case_id: str, ctx: dict[str, Any], error: str,
+                        detail: str) -> VoiceCall:
+        """Persist a FAILED call. The timeline gets a short reason; the full
+        error (which may quote the provider) stays on the call record."""
+        call = VoiceCall(
+            call_id=f"failed-{uuid.uuid4().hex[:8]}", case_id=case_id,
+            status=CallStatus.FAILED, created_at=_now(),
+            case_type=ctx.get("case_type", ""), error=error,
+        )
+        self.store.save(call)
+        self.store.add_timeline_event(case_id, {
+            "event": VoiceEvent.CALL_FAILED, "timestamp": _now(), "detail": detail,
+        })
         return call
 
     # --- mock completion ----------------------------------------------------
@@ -206,21 +269,22 @@ class VoiceEscalationService:
             return call
         call.processed_events.append(event_key)
 
-        # apply status transition (don't regress a terminal state)
+        # status transition: a terminal state is final; active states only
+        # move forward (webhooks can arrive out of order)
         status = new_status or update.get("status")
         if status and call.status not in CallStatus.TERMINAL:
-            call.status = status
+            if status in CallStatus.TERMINAL or (
+                    _ACTIVE_RANK.get(status, -1) > _ACTIVE_RANK.get(call.status, -1)):
+                call.status = status
 
         # apply fields from an end-of-call update
         for f in ("started_at", "ended_at", "duration_seconds", "structured_assessment",
                   "verification_status", "call_outcome", "summary",
                   "customer_statements", "unresolved_questions", "analyst_attention",
                   "customer_requested_human", "transcript_reference",
-                  "recording_reference", "transcript", "transcript_messages"):
+                  "recording_reference", "transcript", "transcript_messages", "error"):
             if f in update and update[f] not in (None, "", []):
                 setattr(call, f, update[f])
-        if "status" in update and call.status not in CallStatus.TERMINAL:
-            call.status = update["status"]
 
         self.store.save(call)
 
