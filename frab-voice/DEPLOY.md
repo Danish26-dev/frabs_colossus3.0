@@ -24,8 +24,8 @@ From the `frab-voice/` folder:
 gcloud run deploy frab-voice --source . \
   --region asia-south1 --project frabs-514608 \
   --service-account frab-voice-sa@frabs-514608.iam.gserviceaccount.com \
-  --allow-unauthenticated --min-instances 1 --max-instances 2 --memory 512Mi \
-  --set-env-vars "VOICE_STORE=firestore,GOOGLE_CLOUD_PROJECT=frabs-514608,FRAB_BANK_API_URL=https://frab-git-379796489354.asia-south1.run.app,VAPI_ASSISTANT_ID=fad86425-0119-4af0-a8e0-1bb54854d93c,VAPI_PHONE_NUMBER_ID=2a8e455b-1e1a-4bfa-840b-22e7c409c10c" \
+  --allow-unauthenticated --min-instances 1 --max-instances 1 --memory 512Mi \
+  --set-env-vars "VOICE_STORE=firestore,GOOGLE_CLOUD_PROJECT=frabs-514608,FRAB_BANK_API_URL=https://frab-git-379796489354.asia-south1.run.app,VAPI_ASSISTANT_ID=<assistant id>,VAPI_PHONE_NUMBER_ID=<phone number id>" \
   --set-secrets "VAPI_API_KEY=VAPI_API_KEY:latest,VOICE_API_TOKEN=VOICE_API_TOKEN:latest,VOICE_WEBHOOK_SECRET=VOICE_WEBHOOK_SECRET:latest,DEMO_CUSTOMER_PHONE=DEMO_CUSTOMER_PHONE:latest"
 ```
 
