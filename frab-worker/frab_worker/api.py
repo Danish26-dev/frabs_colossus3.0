@@ -58,6 +58,8 @@ _default_origins = ",".join([
     "http://localhost:3000",
     "http://127.0.0.1:8080",
     "https://frab-frontend-rkv7mouqhq-el.a.run.app",
+    "https://frab-frontend-v7fdif2gha-el.a.run.app",
+    "https://frab-frontend-379796489354.asia-south1.run.app",
 ])
 _cors_origins = os.environ.get("FRAB_CORS_ORIGINS", _default_origins)
 if _cors_origins.strip() == "*":
