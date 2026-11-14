@@ -33,7 +33,10 @@ Response: `{ "case_id": "CASE0001", "status": "STARTED" }`
 
 ### CORS — DONE, including on the SSE endpoint
 Allowed by default: `http://localhost:8080`, `http://localhost:3000`,
-`http://127.0.0.1:8080`, `https://frab-frontend-rkv7mouqhq-el.a.run.app`.
+`http://127.0.0.1:8080`, `https://frab-frontend-rkv7mouqhq-el.a.run.app`,
+`https://frab-frontend-v7fdif2gha-el.a.run.app` and
+`https://frab-frontend-379796489354.asia-south1.run.app` (the deployed frontend's
+two equivalent Cloud Run URLs). The voice service allows the same list.
 Override the whole list
 with `FRAB_CORS_ORIGINS` (comma-separated). Any other origin gets no CORS header.
 SSE responses send `Cache-Control: no-cache`, `Connection: keep-alive`,

@@ -68,7 +68,7 @@ Optional spend controls: `LLM_MAX_OUTPUT_TOKENS`, `ZG_MAX_PRICE_USD_PROMPT`,
 ```bash
 curl -i https://frab-worker-379796489354.asia-south1.run.app/health
 curl -i -X OPTIONS https://frab-worker-379796489354.asia-south1.run.app/investigate \
-     -H "Origin: http://localhost:8080" -H "Access-Control-Request-Method: POST"
+     -H "Origin: https://frab-frontend-v7fdif2gha-el.a.run.app" -H "Access-Control-Request-Method: POST"
 curl -N "https://frab-worker-379796489354.asia-south1.run.app/investigate/<case_id>/events?token=<token>"
 ```
 
