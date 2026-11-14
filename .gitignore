@@ -38,3 +38,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local presentation and demo video files (never pushed)
+presentation/
