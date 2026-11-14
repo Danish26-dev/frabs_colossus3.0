@@ -79,6 +79,8 @@ app = FastAPI(title="FRAB Voice Escalation Service", version=__version__)
 _DEFAULT_ORIGINS = ",".join([
     "http://localhost:8080",
     "https://frab-frontend-rkv7mouqhq-el.a.run.app",
+    "https://frab-frontend-v7fdif2gha-el.a.run.app",
+    "https://frab-frontend-379796489354.asia-south1.run.app",
 ])
 _origins = os.environ.get("VOICE_CORS_ORIGINS", _DEFAULT_ORIGINS)
 app.add_middleware(
